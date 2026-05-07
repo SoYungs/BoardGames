@@ -5,16 +5,13 @@ import { ModeSelectPage } from './pages/ModeSelectPage'
 import { GomokuPlayPage } from './pages/GomokuPlayPage'
 import { XiangqiPlayPage } from './pages/XiangqiPlayPage'
 
-/** Vite `base: './'` 时 BASE_URL 为 `./`，不能交给 HashRouter 当 basename */
-function routerBasename(): string | undefined {
-  const b = import.meta.env.BASE_URL
-  if (!b || b === '/' || b === './') return undefined
-  return b.endsWith('/') ? b.slice(0, -1) : b
-}
-
+/**
+ * Hash 路由的路径来自 `#` 之后（如 `/#/xiangqi`），与 `import.meta.env.BASE_URL`（如 `/BoardGames/`）无关。
+ * 若把仓库 base 当作 basename，则 `stripBasename('/', '/BoardGames')` 为 null，**所有路由失配 → 黑屏**。
+ */
 function App() {
   return (
-    <HashRouter basename={routerBasename()}>
+    <HashRouter>
       <div className="app-shell">
         <header className="app-header">
           <h1>棋弈</h1>
