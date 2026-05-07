@@ -88,6 +88,7 @@ a {
 
 main.app-main {
   flex: 1;
+  min-width: 0;
 }
 
 .card-grid {
@@ -343,6 +344,13 @@ footer.app-footer code {
 /* —— 象棋 —— */
 .xiangqi-wrap {
   margin-top: 8px;
+  /* 窄屏下棋盘固定 ~430px 宽于视口：允许横向滑动看全盘（flex 子项默认 min-width:auto 会撑开父级，需可收缩） */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .xiangqi-toolbar {
@@ -433,13 +441,15 @@ footer.app-footer code {
 .xiangqi-board-outer {
   position: relative;
   width: fit-content;
-  max-width: 100%;
+  max-width: none;
+  margin-inline: auto;
   border-radius: 16px;
   padding: 10px;
   border: 1px solid var(--stroke);
   background: linear-gradient(180deg, #f3e6c8, #e2cf9e);
   box-shadow: var(--shadow);
-  overflow: hidden;
+  /* 勿 hidden：与 max-width:100% 组合会在窄屏裁掉盘面右侧 */
+  overflow: visible;
 }
 
 .xiangqi-board-surface {
