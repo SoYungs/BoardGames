@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
-type GameId = 'gomoku' | 'xiangqi'
+type GameId = 'gomoku' | 'xiangqi' | 'shogi' | 'chess' | 'junqi'
 
 const copy: Record<GameId, { title: string; subtitle: string }> = {
   gomoku: {
@@ -11,6 +11,18 @@ const copy: Record<GameId, { title: string; subtitle: string }> = {
   xiangqi: {
     title: '中国象棋',
     subtitle: '红先黑后，含将军检测与「将帅照面」限制。',
+  },
+  shogi: {
+    title: '日本将棋',
+    subtitle: '先手后手对弈，支持持子打入、升变与王手。',
+  },
+  chess: {
+    title: '国际象棋',
+    subtitle: '白先黑后，含易位、吃过路兵、升变与将军。',
+  },
+  junqi: {
+    title: '中国军棋',
+    subtitle: '暗棋随机布阵，铁路公路移动与等级战斗。',
   },
 }
 

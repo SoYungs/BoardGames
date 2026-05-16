@@ -552,3 +552,390 @@ footer.app-footer code {
   background: radial-gradient(circle at 30% 25%, #f8fafc, #cbd5e1 45%, #94a3b8);
   border-color: #334155;
 }
+
+/* —— 国际象棋 —— */
+.chess-wrap,
+.shogi-wrap,
+.junqi-wrap {
+  margin-top: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chess-toolbar,
+.shogi-toolbar,
+.junqi-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.chess-actions,
+.shogi-actions,
+.junqi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chess-status,
+.shogi-status,
+.junqi-status {
+  margin: 0;
+  font-weight: 600;
+}
+
+.chess-hint,
+.shogi-hint,
+.junqi-hint {
+  margin: 0 0 12px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.chess-undo,
+.chess-reset,
+.shogi-undo,
+.shogi-reset,
+.junqi-undo,
+.junqi-reset {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.chess-undo:disabled,
+.shogi-undo:disabled,
+.junqi-undo:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chess-board-outer,
+.shogi-board-outer,
+.junqi-board-outer {
+  position: relative;
+  width: fit-content;
+  margin-inline: auto;
+  border-radius: 16px;
+  padding: 10px;
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow);
+}
+
+.chess-board-outer {
+  background: linear-gradient(180deg, #4a3728, #2d2118);
+}
+
+.shogi-board-outer {
+  background: linear-gradient(180deg, #e8c890, #c9a66b);
+}
+
+.junqi-board-outer {
+  background: linear-gradient(180deg, #2d4a35, #1a2e22);
+}
+
+.chess-board-surface,
+.shogi-board-surface,
+.junqi-board-surface {
+  position: relative;
+  display: block;
+}
+
+.shogi-input-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  cursor: pointer;
+  background: transparent;
+}
+
+.shogi-hint--warn {
+  color: #fb7185;
+}
+
+.chess-board-surface--dual .chess-piece.black {
+  transform: rotate(180deg);
+}
+
+.shogi-board-surface--dual .shogi-piece.gote {
+  transform: rotate(180deg);
+}
+
+.chess-check-banner,
+.shogi-check-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: clamp(2rem, calc(var(--ch-w, 400px) * 0.085), 3rem);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #fecaca;
+  text-shadow: 0 0 24px #ef4444;
+  background: radial-gradient(ellipse 72% 58% at 50% 50%, rgba(0, 0, 0, 0.38), transparent 64%);
+}
+
+.chess-svg,
+.shogi-svg,
+.junqi-svg {
+  display: block;
+  pointer-events: none;
+}
+
+.chess-sq-light {
+  fill: #f0d9b5;
+}
+
+.chess-sq-dark {
+  fill: #b58863;
+}
+
+.shogi-bg {
+  fill: #e8c890;
+}
+
+.shogi-line {
+  stroke: #5c4024;
+  stroke-width: 1.2;
+}
+
+.shogi-coord {
+  fill: #5c4024;
+  font-size: 11px;
+}
+
+.junqi-bg {
+  fill: #3d5c45;
+}
+
+.junqi-line {
+  stroke: #8fb39a;
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.junqi-rail {
+  fill: #5a7d66;
+  opacity: 0.35;
+}
+
+.junqi-camp-mark {
+  fill: none;
+  stroke: #a8c9b0;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+  opacity: 0.6;
+}
+
+.chess-grid,
+.junqi-grid {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.shogi-grid {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.chess-cell,
+.junqi-cell {
+  position: absolute;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.shogi-hit {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  pointer-events: auto;
+  z-index: 5;
+  box-sizing: border-box;
+}
+
+.chess-cell.selected,
+.shogi-hit.selected,
+.junqi-cell.selected {
+  box-shadow: inset 0 0 0 3px #2563eb99;
+}
+
+.chess-cell.target,
+.shogi-hit.target,
+.junqi-cell.target {
+  background: radial-gradient(circle, #22c55e55, transparent 70%);
+}
+
+.chess-cell.last-from,
+.shogi-hit.last-from,
+.junqi-cell.last-from {
+  box-shadow: inset 0 0 0 3px #f59e0bcc;
+}
+
+.chess-cell.last-to,
+.shogi-hit.last-to,
+.junqi-cell.last-to {
+  box-shadow: inset 0 0 0 3px #38bdf8cc;
+}
+
+.chess-piece {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  pointer-events: none;
+  line-height: 1;
+}
+
+.chess-piece.white {
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+
+.chess-piece.black {
+  color: #111;
+}
+
+.shogi-piece {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 2;
+  background: #f5e6c8;
+  border: 1px solid #8b6914;
+  clip-path: polygon(50% 0%, 92% 18%, 92% 82%, 50% 100%, 8% 82%, 8% 18%);
+  color: #1a1208;
+}
+
+.shogi-piece.promoted {
+  background: #ffd89b;
+}
+
+.shogi-hand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  background: var(--bg-panel);
+}
+
+.shogi-hand-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 5em;
+}
+
+.shogi-hand-pieces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.shogi-hand-piece {
+  position: relative;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid #8b6914;
+  background: #f5e6c8;
+  color: #1a1208;
+  font-weight: 700;
+}
+
+.shogi-hand-piece.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.shogi-hand-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  font-size: 0.65rem;
+  background: var(--accent);
+  color: #0c0f14;
+  border-radius: 999px;
+  padding: 0 4px;
+}
+
+.junqi-piece {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 8px;
+  pointer-events: none;
+  border: 2px solid;
+}
+
+.junqi-piece.red {
+  color: #fecaca;
+  background: linear-gradient(145deg, #991b1b, #7f1d1d);
+  border-color: #fca5a5;
+}
+
+.junqi-piece.blue {
+  color: #bfdbfe;
+  background: linear-gradient(145deg, #1e3a8a, #1e40af);
+  border-color: #93c5fd;
+}
+
+.junqi-piece.hidden {
+  color: #e8edf5;
+  opacity: 0.92;
+}
+
+.junqi-cell.hq {
+  background: radial-gradient(circle, #fbbf2444, transparent 70%);
+}
+
+.junqi-cell.front {
+  background: radial-gradient(circle, #94a3b822, transparent 75%);
+}
+
+.junqi-frontline {
+  stroke: #fbbf24;
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
+  opacity: 0.55;
+}

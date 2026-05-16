@@ -4,6 +4,9 @@ import { HomePage } from './pages/HomePage'
 import { ModeSelectPage } from './pages/ModeSelectPage'
 import { GomokuPlayPage } from './pages/GomokuPlayPage'
 import { XiangqiPlayPage } from './pages/XiangqiPlayPage'
+import { ShogiPlayPage } from './pages/ShogiPlayPage'
+import { ChessPlayPage } from './pages/ChessPlayPage'
+import { JunqiPlayPage } from './pages/JunqiPlayPage'
 
 /**
  * Hash 路由的路径来自 `#` 之后（如 `/#/xiangqi`），与 `import.meta.env.BASE_URL`（如 `/BoardGames/`）无关。
@@ -23,6 +26,12 @@ function App() {
             <Route path="/gomoku/:mode" element={<GomokuPlayPage />} />
             <Route path="/xiangqi" element={<ModeSelectPage game="xiangqi" />} />
             <Route path="/xiangqi/:mode" element={<XiangqiPlayPage />} />
+            <Route path="/shogi" element={<ModeSelectPage game="shogi" />} />
+            <Route path="/shogi/:mode" element={<ShogiPlayPage />} />
+            <Route path="/chess" element={<ModeSelectPage game="chess" />} />
+            <Route path="/chess/:mode" element={<ChessPlayPage />} />
+            <Route path="/junqi" element={<ModeSelectPage game="junqi" />} />
+            <Route path="/junqi/:mode" element={<JunqiPlayPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </RouteErrorBoundary>
