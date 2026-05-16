@@ -351,7 +351,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
                 piece ? (
                   <div
                     key={piece.id}
-                    className={`shogi-piece ${piece.side}${piece.promoted ? ' promoted' : ''}`}
+                    className={`shogi-piece shogi-piece--${piece.side}${piece.promoted ? ' promoted' : ''}`}
                     style={{
                       left: PAD + c * CELL - 20,
                       top: PAD + r * CELL - 20,
@@ -393,7 +393,7 @@ function ShogiHandPieces(props: {
           <button
             key={type}
             type="button"
-            className={`shogi-hand-piece ${active ? 'active' : ''}`}
+            className={`shogi-hand-piece shogi-hand-piece--${side} ${active ? 'active' : ''}`}
             disabled={winner !== null || turn !== side || (mode === 'ai' && turn === aiSide)}
             onClick={() => onHandClick(type)}
           >

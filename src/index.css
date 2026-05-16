@@ -666,7 +666,7 @@ footer.app-footer code {
   transform: rotate(180deg);
 }
 
-.shogi-board-surface--dual .shogi-piece.gote {
+.shogi-board-surface--dual .shogi-piece--gote {
   transform: rotate(180deg);
 }
 
@@ -835,14 +835,30 @@ footer.app-footer code {
   font-weight: 700;
   pointer-events: none;
   z-index: 2;
-  background: #f5e6c8;
-  border: 1px solid #8b6914;
+  border: 1px solid;
   clip-path: polygon(50% 0%, 92% 18%, 92% 82%, 50% 100%, 8% 82%, 8% 18%);
-  color: #1a1208;
 }
 
-.shogi-piece.promoted {
-  background: #ffd89b;
+.shogi-piece--sente {
+  color: #1a1208;
+  background: linear-gradient(165deg, #faf0dc 0%, #e8d4a8 55%, #d4bc88 100%);
+  border-color: #8b6914;
+}
+
+.shogi-piece--sente.promoted {
+  background: linear-gradient(165deg, #ffe8b0 0%, #e8c070 55%, #d4a850 100%);
+  border-color: #a16207;
+}
+
+.shogi-piece--gote {
+  color: #7f1d1d;
+  background: linear-gradient(165deg, #fce8e8 0%, #e8b4b4 55%, #d49898 100%);
+  border-color: #b91c1c;
+}
+
+.shogi-piece--gote.promoted {
+  background: linear-gradient(165deg, #fecaca 0%, #f08080 55%, #e06060 100%);
+  border-color: #991b1b;
 }
 
 .shogi-hand {
@@ -875,10 +891,20 @@ footer.app-footer code {
   height: 36px;
   padding: 0 8px;
   border-radius: 8px;
-  border: 1px solid #8b6914;
-  background: #f5e6c8;
-  color: #1a1208;
+  border: 1px solid;
   font-weight: 700;
+}
+
+.shogi-hand-piece--sente {
+  color: #1a1208;
+  background: linear-gradient(165deg, #faf0dc, #e8d4a8);
+  border-color: #8b6914;
+}
+
+.shogi-hand-piece--gote {
+  color: #7f1d1d;
+  background: linear-gradient(165deg, #fce8e8, #e8b4b4);
+  border-color: #b91c1c;
 }
 
 .shogi-hand-piece.active {
