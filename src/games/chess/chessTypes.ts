@@ -1,5 +1,11 @@
 export type Side = 'white' | 'black'
 export type PieceType = 'k' | 'q' | 'r' | 'b' | 'n' | 'p'
+export type PromotionPieceType = 'q' | 'r' | 'b' | 'n'
+export const PROMOTION_PIECES: readonly PromotionPieceType[] = ['q', 'r', 'b', 'n']
+
+export const PIECE_NAMES: Record<PieceType, string> = {
+  k: '王', q: '后', r: '车', b: '象', n: '马', p: '兵',
+}
 
 export interface Piece {
   id: string
@@ -14,7 +20,7 @@ export interface Move {
   fromC: number
   toR: number
   toC: number
-  promotion?: PieceType
+  promotion?: PromotionPieceType
   castle?: 'kingside' | 'queenside'
 }
 

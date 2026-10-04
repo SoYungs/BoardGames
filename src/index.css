@@ -1,217 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,500&display=swap');
-
-:root {
-  color-scheme: dark;
-  --bg-deep: #0c0f14;
-  --bg-panel: #141a24;
-  --bg-elevated: #1c2433;
-  --stroke: #2a3548;
-  --text: #e8edf5;
-  --muted: #8b98ad;
-  --accent: #5eead4;
-  --accent-dim: #2dd4bf33;
-  --danger: #fb7185;
-  --font-sans: 'DM Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --radius: 14px;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  font-family: var(--font-sans);
-  background: radial-gradient(1200px 800px at 20% 0%, #1a2436 0%, var(--bg-deep) 55%);
-  color: var(--text);
-  -webkit-font-smoothing: antialiased;
-}
-
-button {
-  font: inherit;
-  cursor: pointer;
-}
-
-a {
-  color: var(--accent);
-}
-
-.app-shell {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: clamp(16px, 4vw, 40px);
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.app-header h1 {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--stroke);
-  background: var(--bg-panel);
-  color: var(--text);
-  text-decoration: none;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.back-link:hover {
-  background: var(--bg-elevated);
-  border-color: #3d4d66;
-}
-
-main.app-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
-}
-
-.game-card {
-  position: relative;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius);
-  padding: 24px;
-  background: linear-gradient(155deg, var(--bg-panel), #111822);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  text-decoration: none;
-  color: inherit;
-  display: block;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-
-.game-card:hover {
-  border-color: #4a5d7a;
-  transform: translateY(-2px);
-}
-
-.game-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(500px 200px at 80% -20%, var(--accent-dim), transparent 60%);
-  pointer-events: none;
-}
-
-.game-card h2 {
-  margin: 0 0 8px;
-  font-size: 1.35rem;
-}
-
-.game-card p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.mode-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 420px;
-}
-
-.mode-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 18px 20px;
-  border-radius: var(--radius);
-  border: 1px solid var(--stroke);
-  background: var(--bg-panel);
-  color: var(--text);
-  text-align: left;
-  text-decoration: none;
-  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-.mode-btn:hover {
-  background: var(--bg-elevated);
-  border-color: #3f516e;
-}
-
-.mode-btn:active {
-  transform: scale(0.99);
-}
-
-.mode-btn strong {
-  font-size: 1.05rem;
-}
-
-.mode-btn span {
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.tag {
-  display: inline-block;
-  margin-top: 14px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  color: var(--accent);
-  border: 1px solid #2dd4bf55;
-  background: #0f2925;
-}
-
-.page-title {
-  margin: 0 0 8px;
-  font-size: clamp(1.6rem, 4vw, 2rem);
-}
-
-.page-sub {
-  margin: 0 0 28px;
-  color: var(--muted);
-}
-
-footer.app-footer {
-  margin-top: 48px;
-  padding-top: 20px;
-  border-top: 1px solid var(--stroke);
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-footer.app-footer code {
-  font-size: 0.78em;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--bg-panel);
-  border: 1px solid var(--stroke);
-}
+@import './styles/theme.css';
 
 /* —— 五子棋 —— */
 .gomoku-wrap {
@@ -964,4 +751,143 @@ footer.app-footer code {
   stroke-width: 2;
   stroke-dasharray: 8 6;
   opacity: 0.55;
+}
+
+/* 对局桌面：共享工具栏、触摸棋盘与走子反馈 */
+.play-table :is(.gomoku-wrap, .xiangqi-wrap, .chess-wrap, .shogi-wrap, .junqi-wrap) {
+  margin-top: 0;
+  overflow: visible;
+}
+.play-table :is(.gomoku-toolbar, .xiangqi-toolbar, .chess-toolbar, .shogi-toolbar, .junqi-toolbar) {
+  gap: 10px;
+  margin-bottom: 15px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e7eadf;
+}
+.play-table :is(.gomoku-status, .xiangqi-status, .chess-status, .shogi-status, .junqi-status) {
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.7;
+}
+.play-table [role='status']::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #829870;
+  box-shadow: 0 0 0 3px #82987014;
+  flex-shrink: 0;
+}
+.play-table [role='status'][data-thinking='true']::before { animation: thinking-pulse 1.2s ease-in-out infinite; }
+@keyframes thinking-pulse { 50% { opacity: .4; box-shadow: 0 0 0 5px #82987014; } }
+.play-table :is(.gomoku-actions, .xiangqi-actions, .chess-actions, .shogi-actions, .junqi-actions) { gap: 7px; }
+.play-table :is(.gomoku-undo, .gomoku-reset, .xiangqi-undo, .xiangqi-reset, .chess-undo, .chess-reset, .shogi-undo, .shogi-reset, .junqi-undo, .junqi-reset) {
+  padding: 8px 12px;
+  background: #f3f4ec;
+  border: 1px solid #dfe3d5;
+  color: #718060;
+  border-radius: 7px;
+  font-size: 10px;
+  transition: background .2s, border-color .2s;
+}
+.play-table :is(.gomoku-undo, .gomoku-reset, .xiangqi-undo, .xiangqi-reset, .chess-undo, .chess-reset, .shogi-undo, .shogi-reset, .junqi-undo, .junqi-reset):hover:not(:disabled) {
+  background: #e7eddf;
+  border-color: #9bb08b;
+}
+.play-table :is(.gomoku-hint, .xiangqi-hint, .chess-hint, .shogi-hint, .junqi-hint) {
+  font-size: 10px;
+  line-height: 1.85;
+  color: #87917e;
+  margin-bottom: 18px;
+}
+.move-count { float: right; color: #a1aa96; font-size: 9px; }
+.play-table .gomoku-board {
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid #bba174;
+  background: radial-gradient(circle at 25% 10%, #fff0d360, transparent 65%), linear-gradient(125deg, #ead0a1, #d6b484);
+  box-shadow: inset 0 0 0 4px #e5c796, 0 9px 19px #7b603519;
+}
+.gomoku-cell::before {
+  background: linear-gradient(#997e5366, #997e5366) center / 100% 1px no-repeat, linear-gradient(#997e5366, #997e5366) center / 1px 100% no-repeat;
+}
+.gomoku-star { position: absolute; width: 4px; height: 4px; left: calc(50% - 2px); top: calc(50% - 2px); background: #8f714c; border-radius: 50%; pointer-events: none; }
+.gomoku-cell:hover:not(:disabled)::after { border-color: #4e633d88; background: #4e633d10; }
+.gomoku-cell.last-move::after { border: 2px solid #b68443; box-shadow: none; inset: 5%; z-index: 1; }
+.gomoku-stone { box-shadow: 0 3px 4px #402e3b30, inset 0 -1px 2px #0002; }
+.gomoku-stone.black { background: radial-gradient(circle at 30% 25%, #556052, #1a251e 65%); border: 1px solid #344233; }
+.gomoku-stone.white { background: radial-gradient(circle at 30% 25%, #fffef5, #e5e1d4 70%); border: 1px solid #c3c1af; }
+.play-table :is(.xiangqi-board-outer, .chess-board-outer, .shogi-board-outer, .junqi-board-outer) { border-radius: 10px; box-shadow: 0 9px 20px #31402818; }
+.xiangqi-board-outer { border-color: #c4ad80; }
+.xiangqi-piece { font-family: var(--font-serif); box-shadow: 0 3px 4px #4d36162b, inset 0 1px 1px #fff8; }
+.xiangqi-piece.red { color: #9b4434; background: radial-gradient(circle at 25% 20%, #fff2d9, #eed9b1); border-color: #b17a5c; }
+.xiangqi-piece.black { color: #344334; background: radial-gradient(circle at 25% 20%, #fff2d9, #eed9b1); border-color: #778264; }
+.xiangqi-bg { fill: #efdfbb; }
+.xiangqi-line { stroke: #a68a58; stroke-width: 1; }
+.xiangqi-river { fill: #a28b62; }
+.chess-board-outer { background: #829075; border-color: #728168; }
+.chess-sq-light { fill: #f0e7cf; }
+.chess-sq-dark { fill: #8d9d7d; }
+.chess-piece { font-family: Georgia, 'Times New Roman', serif; font-size: 37px; }
+.chess-piece.white { color: #fffbed; text-shadow: 0 1px 0 #798675, 0 2px 2px #3c4a3530; }
+.chess-piece.black { color: #283c2f; text-shadow: 0 1px 0 #fff3; }
+.shogi-board-outer { background: #d8b27a; border-color: #b99a67; }
+.shogi-bg { fill: #e9cd98; }
+.shogi-line { stroke: #a28a5d; stroke-width: .9; }
+.shogi-piece { font-family: var(--font-serif); clip-path: polygon(50% 0, 86% 18%, 96% 100%, 4% 100%, 14% 18%); font-size: 20px; }
+.shogi-piece--sente { color: #3a452d; background: linear-gradient(160deg, #fcf0d4, #e4c38c); border-color: #b39766; }
+.shogi-piece--gote { color: #a05742; background: linear-gradient(160deg, #f4e7c8, #dbb887); border-color: #b38e60; }
+.shogi-hand { padding: 10px 12px; border-radius: 9px; background: #f3f2e9; gap: 7px; }
+.shogi-hand-label { color: #8b937e; font-size: 9px; }
+.shogi-hand-piece { font-family: var(--font-serif); font-size: 16px; }
+.shogi-hand-piece--sente { color: #4c5d3c; border-color: #c6b685; }
+.shogi-hand-piece--gote { color: #a05742; border-color: #c6b685; background: linear-gradient(165deg, #f6ebd4, #e7d5ac); }
+.shogi-hand-count { background: #849770; color: white; }
+.junqi-board-outer { background: #4c6750; border-color: #425c48; }
+.junqi-bg { fill: #6f8a69; }
+.junqi-line { stroke: #c3d1ac; opacity: .5; }
+.junqi-rail { fill: #c1cfab; opacity: .3; }
+.junqi-camp-mark { stroke: #d9dfc2; stroke-dasharray: none; opacity: .85; }
+.junqi-piece { font-family: var(--font-serif); font-size: 13px; border-width: 1px; border-radius: 4px; box-shadow: 0 2px 3px #24321b40; }
+.junqi-piece.red { color: #fff0d7; background: linear-gradient(145deg, #b57560, #9c5845); border-color: #d8b09a; }
+.junqi-piece.blue { color: #f0f1dc; background: linear-gradient(145deg, #526968, #3b5553); border-color: #a2b6a4; }
+.junqi-piece.hidden { color: #f5ebd2; opacity: 1; }
+:is(.xiangqi-cell, .chess-cell, .shogi-hit, .junqi-cell).selected { box-shadow: inset 0 0 0 2.5px #406b4299; }
+:is(.xiangqi-cell, .chess-cell, .shogi-hit, .junqi-cell).target { background: radial-gradient(circle, #4f7e59aa 0 12%, #4f7e5920 13% 26%, transparent 27%); }
+:is(.xiangqi-cell, .chess-cell, .shogi-hit, .junqi-cell).last-from { box-shadow: inset 0 0 0 2px #b1905866; }
+:is(.xiangqi-cell, .chess-cell, .shogi-hit, .junqi-cell).last-to { box-shadow: inset 0 0 0 2px #bc8c48bb; }
+:is(.xiangqi-cell, .chess-cell, .shogi-hit, .junqi-cell).selected { box-shadow: inset 0 0 0 3px #406b42cc; }
+:is(.xiangqi-cell, .chess-cell, .shogi-hit, .junqi-cell):focus-visible { outline: 2px solid #315d49; outline-offset: -3px; }
+.xiangqi-check-banner, .chess-check-banner, .shogi-check-banner {
+  inset: 10px auto auto 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  padding: 7px 14px;
+  border-radius: 7px;
+  background: #fff2dded;
+  border: 1px solid #d6a176;
+  box-shadow: 0 3px 12px #6f422e22;
+  color: #a34f36;
+  text-shadow: none;
+  font-family: var(--font-serif);
+  font-size: 19px;
+  letter-spacing: .06em;
+  animation: check-arrive .3s ease-out;
+}
+@keyframes check-arrive { from { opacity: 0; translate: 0 -5px; } to { opacity: 1; translate: 0 0; } }
+.chess-promotion, .shogi-promotion { border: 1px solid #c6d1b6; background: #f1f4e7; padding: 15px; border-radius: 10px; margin-bottom: 18px; font-size: 12px; color: #647953; animation: check-arrive .25s ease-out; }
+.chess-promotion p { margin: 0 0 10px; }
+.chess-promotion-options, .shogi-promotion { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.chess-promotion-option, .chess-promotion-cancel, .shogi-promotion button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 11px; border: 1px solid #c4d1b3; border-radius: 7px; background: #fffdf4; color: #557145; font-size: 11px; }
+.chess-promotion-option:hover, .shogi-promotion button:hover { border-color: #809a6b; background: #e7edda; }
+.chess-promotion-symbol { font-size: 24px; }
+.chess-promotion-cancel { background: transparent; }
+@media (max-width: 540px) {
+  .play-table :is(.gomoku-status, .xiangqi-status, .chess-status, .shogi-status, .junqi-status) { font-size: 11px; flex-basis: 100%; }
+  .play-table :is(.gomoku-toolbar, .xiangqi-toolbar, .chess-toolbar, .shogi-toolbar, .junqi-toolbar) { align-items: start; gap: 10px; }
+  .play-table :is(.gomoku-actions, .xiangqi-actions, .chess-actions, .shogi-actions, .junqi-actions) { margin-left: auto; }
+  .play-table :is(.gomoku-hint, .xiangqi-hint, .chess-hint, .shogi-hint, .junqi-hint) { font-size: 9px; margin-bottom: 14px; }
 }

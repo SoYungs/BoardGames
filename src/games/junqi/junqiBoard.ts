@@ -5,16 +5,16 @@ function p(id: string, side: Side, type: PieceType, revealed = false): Piece {
   return { id, side, type, revealed }
 }
 
-function shuffle<T>(arr: T[]): T[] {
+function shuffle<T>(arr: T[], random: () => number): T[] {
   const a = [...arr]
   for (let i = 0; i < a.length; i++) {
-    const j = Math.floor(Math.random() * (i + 1))
+    const j = Math.floor(random() * (i + 1))
     ;[a[i], a[j]] = [a[j]!, a[i]!]
   }
   return a
 }
 
-/** 大本营（军旗所在区域，开局不布子） */
+/** 每方两个大本营：军旗必须置于其中之一，进入本营的棋子不能再移动。 */
 export function isHeadquarters(r: number, c: number): boolean {
   return (r === 0 || r === 5) && (c === 5 || c === 6)
 }
@@ -41,42 +41,47 @@ export function isRailway(r: number, c: number): boolean {
   return false
 }
 
-/** 双方前线（开局中间空出，不布子） */
-export function isFrontline(r: number, _c?: number): boolean {
+/** 简化棋盘的双方前线。 */
+export function isFrontline(r: number): boolean {
   return r === 2 || r === 3
 }
 
 /**
- * 布阵区：己方后两行 + 前线各一列，共 25 格。
- * 蓝方在上（0–2 行），红方在下（3–5 行）；行 2、3 为前线，仅最外侧各布 1 子。
+ * 6×12 简化布阵：后两行除行营外的 20 格，加前线 5 格，共 25 格。
+ * 蓝方在上（0–2 行），红方在下（3–5 行）。行营开局留空。
  */
 export function deployCells(side: Side): [number, number][] {
   const cells: [number, number][] = []
-  if (side === 'blue') {
-    for (const r of [0, 1]) {
-      for (let c = 0; c < COLS; c++) {
-        if (!isHeadquarters(r, c)) cells.push([r, c])
-      }
+  const rearRows = side === 'blue' ? [0, 1] : [4, 5]
+  for (const r of rearRows) {
+    for (let c = 0; c < COLS; c++) {
+      if (!isCamp(r, c)) cells.push([r, c])
     }
-    for (const c of [0, 1, 11]) cells.push([2, c])
-  } else {
-    for (const r of [4, 5]) {
-      for (let c = 0; c < COLS; c++) {
-        if (!isHeadquarters(r, c)) cells.push([r, c])
-      }
-    }
-    for (const c of [0, 1, 11]) cells.push([3, c])
   }
-  return cells.slice(0, 25)
+  const frontRow = side === 'blue' ? 2 : 3
+  for (const c of [0, 1, 5, 10, 11]) cells.push([frontRow, c])
+  return cells
 }
 
-export function createInitialBoard(): Board {
+export function createInitialBoard(random: () => number = Math.random): Board {
   const b: Board = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => null))
   for (const side of ['red', 'blue'] as Side[]) {
-    const types = shuffle(piecePool())
-    const cells = shuffle(deployCells(side))
-    cells.forEach(([r, c], i) => {
-      b[r][c] = p(`${side}-${types[i]}-${r}-${c}`, side, types[i]!, false)
+    const rearRow = side === 'blue' ? 0 : 5
+    const flagColumn = random() < 0.5 ? 5 : 6
+    b[rearRow][flagColumn] = p(`${side}-flag`, side, 'flag')
+
+    const mineCells = shuffle(
+      deployCells(side).filter(([r, c]) => r === rearRow && !b[r][c]),
+      random,
+    ).slice(0, 3)
+    mineCells.forEach(([r, c], index) => {
+      b[r][c] = p(`${side}-mine-${index}`, side, 'mine')
+    })
+
+    const types = shuffle(piecePool().filter((type) => type !== 'flag' && type !== 'mine'), random)
+    const cells = shuffle(deployCells(side).filter(([r, c]) => !b[r][c]), random)
+    cells.forEach(([r, c], index) => {
+      b[r][c] = p(`${side}-${types[index]}-${index}`, side, types[index])
     })
   }
   return b
@@ -96,14 +101,11 @@ export function applyMove(
   result: import('./junqiCombat').CombatResult,
 ): Board {
   const next = cloneBoard(board)
-  const attacker = next[move.fromR][move.fromC]!
-  const defender = next[move.toR][move.toC]
-
-  attacker.revealed = true
-  if (defender) defender.revealed = true
+  const attacker = board[move.fromR][move.fromC]!
+  const defender = board[move.toR][move.toC]
 
   if (!defender) {
-    next[move.toR][move.toC] = { ...attacker, revealed: true }
+    next[move.toR][move.toC] = { ...attacker }
     next[move.fromR][move.fromC] = null
     return next
   }
@@ -113,6 +115,7 @@ export function applyMove(
     next[move.fromR][move.fromC] = null
   } else if (result === 'defender') {
     next[move.fromR][move.fromC] = null
+    next[move.toR][move.toC] = { ...defender, revealed: true }
   } else if (result === 'both') {
     next[move.toR][move.toC] = null
     next[move.fromR][move.fromC] = null

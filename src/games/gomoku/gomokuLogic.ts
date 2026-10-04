@@ -7,6 +7,10 @@ export function emptyBoard(): Cell[][] {
   )
 }
 
+export function isBoardFull(board: Cell[][]): boolean {
+  return board.every(row => row.every(cell => cell !== 0))
+}
+
 const DIRS = [
   [1, 0],
   [0, 1],
@@ -130,7 +134,7 @@ export function getCandidates(board: Cell[][]): [number, number][] {
       }
     }
   }
-  if (out.length === 0) return [[7, 7]]
+  if (out.length === 0 && stoneCount(board) === 0) return [[7, 7]]
   return out
 }
 
@@ -305,7 +309,7 @@ function negamax(
   cur: 1 | 2,
   ai: 1 | 2,
 ): number {
-  if (depth === 0) return evaluateBoard(board, ai)
+  if (depth === 0) return evaluateBoard(board, ai) * (cur === ai ? 1 : -1)
 
   const cands = getCandidates(board)
   const moves: [number, number][] = []
@@ -313,7 +317,7 @@ function negamax(
     if (board[r][c] !== 0) continue
     moves.push([r, c])
   }
-  if (moves.length === 0) return evaluateBoard(board, ai)
+  if (moves.length === 0) return 0
 
   moves.sort((a, b) => moveOrderHint(board, b[0], b[1], cur) - moveOrderHint(board, a[0], a[1], cur))
 
@@ -334,11 +338,12 @@ function negamax(
     if (alpha >= beta) break
     any = true
   }
-  return any ? best : evaluateBoard(board, ai)
+  return any ? best : evaluateBoard(board, ai) * (cur === ai ? 1 : -1)
 }
 
-export function pickAiMove(board: Cell[][], aiPlayer: 1 | 2): [number, number] {
+export function pickAiMove(board: Cell[][], aiPlayer: 1 | 2): [number, number] | null {
   const candidates = getCandidates(board)
+  if (candidates.length === 0) return null
   const human = aiPlayer === 1 ? 2 : 1
 
   for (const [r, c] of candidates) {
@@ -449,7 +454,7 @@ export function pickAiMove(board: Cell[][], aiPlayer: 1 | 2): [number, number] {
     next[r][c] = aiPlayer
     if (checkWin(next, r, c, aiPlayer)) return [r, c]
     const reply = human
-    const score = negamax(next, searchDepth - 1, -Infinity, Infinity, reply, aiPlayer)
+    const score = -negamax(next, searchDepth - 1, -Infinity, Infinity, reply, aiPlayer)
     if (score > bestScore) {
       bestScore = score
       best = [r, c]

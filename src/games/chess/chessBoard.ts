@@ -60,10 +60,8 @@ export function applyMove(board: Board, meta: GameMeta, move: Move): { board: Bo
     const row = piece.side === 'white' ? 7 : 0
     next[row][6] = next[row][4]
     next[row][4] = null
-    next[row][6]!.id = `${piece.side}-k-castle`
     next[row][5] = next[row][7]
     next[row][7] = null
-    next[row][5]!.id = `${piece.side}-r-castle`
     clearCastlingForSide(nextMeta.castling, piece.side)
     nextMeta.enPassant = null
     return { board: next, meta: nextMeta }
@@ -73,10 +71,8 @@ export function applyMove(board: Board, meta: GameMeta, move: Move): { board: Bo
     const row = piece.side === 'white' ? 7 : 0
     next[row][2] = next[row][4]
     next[row][4] = null
-    next[row][2]!.id = `${piece.side}-k-castle-q`
     next[row][3] = next[row][0]
     next[row][0] = null
-    next[row][3]!.id = `${piece.side}-r-castle-q`
     clearCastlingForSide(nextMeta.castling, piece.side)
     nextMeta.enPassant = null
     return { board: next, meta: nextMeta }
@@ -91,7 +87,7 @@ export function applyMove(board: Board, meta: GameMeta, move: Move): { board: Bo
   next[move.fromR][move.fromC] = null
 
   if (move.promotion) {
-    next[move.toR][move.toC] = { ...piece, type: move.promotion, id: `${piece.id}-promo` }
+    next[move.toR][move.toC] = { ...piece, type: move.promotion }
   }
 
   nextMeta.enPassant = null

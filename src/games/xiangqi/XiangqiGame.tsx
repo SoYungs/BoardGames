@@ -1,3 +1,4 @@
+import { GameResult } from '../../components/GameResult'
 import {
   useCallback,
   useEffect,
@@ -7,14 +8,16 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { ResponsiveBoard } from '../../components/ResponsiveBoard'
+import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
 import type { Board, Move, Side } from './xiangqiTypes'
 import { pieceChar } from './xiangqiTypes'
 import {
-  allLegalMovesChecked,
+  getXiangqiWinner,
   inCheck,
   legalMovesFromChecked,
-  pickAiMoveXiangqi,
 } from './xiangqiMoves'
 
 type Mode = 'local' | 'ai'
@@ -26,7 +29,7 @@ type XiangqiSnap = {
   board: Board
   turn: Side
   lastMove: Move | null
-  winner: Side | 'draw' | null
+  winner: Side | null
   selected: [number, number] | null
 }
 
@@ -34,9 +37,10 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const [board, setBoard] = useState<Board>(() => createInitialBoard())
   const [turn, setTurn] = useState<Side>('red')
   const [selected, setSelected] = useState<[number, number] | null>(null)
-  const [winner, setWinner] = useState<Side | 'draw' | null>(null)
+  const [winner, setWinner] = useState<Side | null>(null)
   const [lastMove, setLastMove] = useState<Move | null>(null)
   const [history, setHistory] = useState<XiangqiSnap[]>([])
+  const [aiError, setAiError] = useState(false)
 
   const boardForAiRef = useRef(board)
   useLayoutEffect(() => {
@@ -52,28 +56,16 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     return legalMovesFromChecked(board, r, c)
   }, [board, selected])
 
-  /** 将军 / 将死一次算出：避免 render 与 effect 各算一遍 allLegalMovesChecked */
-  const checkState = useMemo(() => {
-    if (winner) return { showCheckOverlay: false, isCheckmate: false }
-    if (!inCheck(board, turn)) return { showCheckOverlay: false, isCheckmate: false }
-    const moves = allLegalMovesChecked(board, turn)
-    return { showCheckOverlay: true, isCheckmate: moves.length === 0 }
-  }, [winner, board, turn])
+  const isCheck = useMemo(() => !winner && inCheck(board, turn), [winner, board, turn])
 
   const status = useMemo(() => {
-    if (winner === 'draw') return '和棋（困毙）'
+    if (aiError) return '电脑计算遇到问题，请重新开始'
     if (winner) return `${winner === 'red' ? '红方' : '黑方'} 胜`
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     const sideLabel = turn === 'red' ? '红方' : '黑方'
-    const chk = checkState.showCheckOverlay ? ' · 将军！' : ''
+    const chk = isCheck ? ' · 将军！' : ''
     return `${sideLabel} 行棋${chk}`
-  }, [winner, mode, turn, aiSide, checkState.showCheckOverlay])
-
-  /** 将死兜底：同步判负，避免 effect 晚一拍或多轮 setState */
-  useLayoutEffect(() => {
-    if (winner || !checkState.isCheckmate) return
-    setWinner(turn === 'red' ? 'black' : 'red')
-  }, [winner, checkState.isCheckmate, turn])
+  }, [winner, mode, turn, aiSide, isCheck, aiError])
 
   const reset = useCallback(() => {
     setBoard(createInitialBoard())
@@ -82,6 +74,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     setWinner(null)
     setLastMove(null)
     setHistory([])
+    setAiError(false)
   }, [])
 
   const undo = useCallback(() => {
@@ -120,13 +113,9 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
         return
       }
       const nextTurn = opp
-      const movesNext = allLegalMovesChecked(next, nextTurn)
-      if (movesNext.length === 0) {
-        if (inCheck(next, nextTurn)) {
-          setWinner(turn)
-        } else {
-          setWinner('draw')
-        }
+      const nextWinner = getXiangqiWinner(next, nextTurn)
+      if (nextWinner) {
+        setWinner(nextWinner)
         return
       }
       setTurn(nextTurn)
@@ -135,12 +124,11 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   )
 
   useEffect(() => {
-    if (winner || mode !== 'ai' || turn !== aiSide) return
-    const t = window.setTimeout(() => {
-      const cur = boardForAiRef.current
-      const m = pickAiMoveXiangqi(cur, aiSide)
+    if (winner || aiError || mode !== 'ai' || turn !== aiSide) return
+    const cur = boardForAiRef.current
+    return scheduleAiMove('xiangqi', { board: cur, side: aiSide }, (m) => {
       if (!m) {
-        setWinner(inCheck(cur, aiSide) ? humanSide : 'draw')
+        setWinner(humanSide)
         return
       }
       const cap = cur[m.toR][m.toC]
@@ -151,17 +139,16 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
         setBoard(next)
         return
       }
-      const redMoves = allLegalMovesChecked(next, 'red')
-      if (redMoves.length === 0) {
-        setWinner(inCheck(next, 'red') ? aiSide : 'draw')
+      const nextWinner = getXiangqiWinner(next, 'red')
+      if (nextWinner) {
+        setWinner(nextWinner)
         setBoard(next)
         return
       }
       setBoard(next)
       setTurn('red')
-    }, 320)
-    return () => window.clearTimeout(t)
-  }, [winner, mode, turn, aiSide, humanSide])
+    }, 320, () => setAiError(true))
+  }, [winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return
@@ -200,7 +187,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   return (
     <div className="xiangqi-wrap">
       <div className="xiangqi-toolbar">
-        <p className="xiangqi-status">{status}</p>
+        <p className="xiangqi-status" role="status" aria-live="polite" data-thinking={mode === 'ai' && turn === aiSide && !winner && !aiError}>{status}</p>
         <div className="xiangqi-actions">
           {mode === 'local' && (
             <button type="button" className="xiangqi-undo" onClick={undo} disabled={history.length === 0}>
@@ -212,7 +199,9 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
           </button>
         </div>
       </div>
+      <GameResult result={winner ? status : null} onRestart={reset} />
       {mode === 'ai' && <p className="xiangqi-hint">你执红棋在下方先手；电脑执黑。</p>}
+      <ResponsiveBoard width={w + 22} height={h + 22}>
       <div
         className="xiangqi-board-outer"
         style={
@@ -226,8 +215,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
           className={`xiangqi-board-surface${mode === 'local' ? ' xiangqi-board-surface--dual' : ''}`}
           style={{ width: w, height: h }}
         >
-          {checkState.showCheckOverlay && (
-            <div className="xiangqi-check-banner" role="status" aria-live="polite">
+          {isCheck && (
+            <div className="xiangqi-check-banner" role="status" aria-live="polite" data-thinking={mode === 'ai' && turn === aiSide && !winner && !aiError}>
               将军
             </div>
           )}
@@ -333,6 +322,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
               const isTarget = targets.some((m) => m.toR === r && m.toC === c)
               const isLastFrom = lastMove?.fromR === r && lastMove?.fromC === c
               const isLastTo = lastMove?.toR === r && lastMove?.toC === c
+              const piece = board[r][c]
+              const label = piece ? `${piece.side === 'red' ? '红方' : '黑方'}${pieceChar(piece)}` : '空位'
               return (
                 <button
                   key={`${r}-${c}`}
@@ -342,31 +333,38 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
                     left: PAD + c * CELL - 22,
                     top: PAD + r * CELL - 22,
                   }}
-                  aria-label={`第 ${r + 1} 行第 ${c + 1} 列`}
+                  aria-label={`第 ${r + 1} 行第 ${c + 1} 列，${label}${isTarget ? '，合法目标' : ''}`}
+                  aria-pressed={isSel}
                   onClick={() => onCellClick(r, c)}
                 />
               )
             }),
           )}
-          {board.map((row, r) =>
+          <AnimatePresence initial={false}>
+          {board.flatMap((row, r) =>
             row.map((piece, c) =>
               piece ? (
-                <div
+                <motion.div
                   key={piece.id}
-                  className={`xiangqi-piece ${piece.side}`}
-                  style={{
-                    left: PAD + c * CELL - 20,
-                    top: PAD + r * CELL - 20,
-                  }}
+                  style={{ position: 'absolute', left: 0, top: 0, width: 40, height: 40, pointerEvents: 'none' }}
+                  initial={{ opacity: 0, scale: 0.65 }}
+                  animate={{ x: PAD + c * CELL - 20, y: PAD + r * CELL - 20, opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.45 }}
+                  transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+                  aria-hidden="true"
                 >
+                  <div className={`xiangqi-piece ${piece.side}`} style={{ left: 0, top: 0 }}>
                   {pieceChar(piece)}
-                </div>
+                  </div>
+                </motion.div>
               ) : null,
             ),
           )}
+          </AnimatePresence>
           </div>
         </div>
       </div>
+      </ResponsiveBoard>
     </div>
   )
 }

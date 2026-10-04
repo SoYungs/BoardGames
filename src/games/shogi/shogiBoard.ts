@@ -37,7 +37,8 @@ export function snapshotHand(hand: Hand): Hand {
   return { sente: [...hand.sente], gote: [...hand.gote] }
 }
 
-function mustPromote(piece: Piece, toR: number, side: Side): boolean {
+export function mustPromote(piece: Piece, toR: number, side: Side): boolean {
+  if (piece.promoted) return false
   if (piece.type === 'p') return side === 'sente' ? toR === 0 : toR === 8
   if (piece.type === 'l') return side === 'sente' ? toR === 0 : toR === 8
   if (piece.type === 'n') return side === 'sente' ? toR <= 1 : toR >= 7
@@ -48,6 +49,17 @@ function inPromoZone(r: number, side: Side): boolean {
   return side === 'sente' ? r <= 2 : r >= 6
 }
 
+export function canPromote(piece: Piece, fromR: number, toR: number): boolean {
+  return (
+    !piece.promoted &&
+    piece.type !== 'k' &&
+    piece.type !== 'g' &&
+    (inPromoZone(fromR, piece.side) || inPromoZone(toR, piece.side))
+  )
+}
+
+let dropId = 0
+
 export function applyShogiMove(
   board: Board,
   hand: Hand,
@@ -57,12 +69,16 @@ export function applyShogiMove(
   const next = cloneBoard(board)
   const nextHand = snapshotHand(hand)
 
+  if (move.toR < 0 || move.toR >= ROWS || move.toC < 0 || move.toC >= COLS) {
+    return { board: next, hand: nextHand }
+  }
+
   if (move.dropType) {
     const idx = nextHand[side].indexOf(move.dropType)
-    if (idx < 0) return { board: next, hand: nextHand }
+    if (idx < 0 || move.dropType === 'k' || next[move.toR][move.toC]) return { board: next, hand: nextHand }
     nextHand[side].splice(idx, 1)
     next[move.toR][move.toC] = {
-      id: `${side}-drop-${move.dropType}-${move.toR}-${move.toC}`,
+      id: `${side}-drop-${move.dropType}-${++dropId}`,
       side,
       type: move.dropType,
       promoted: false,
@@ -70,14 +86,17 @@ export function applyShogiMove(
     return { board: next, hand: nextHand }
   }
 
-  const piece = next[move.fromR!][move.fromC!]!
+  if (move.fromR === undefined || move.fromC === undefined) return { board: next, hand: nextHand }
+  const piece = next[move.fromR]?.[move.fromC]
   const cap = next[move.toR][move.toC]
+  if (!piece || piece.side !== side || cap?.side === side || cap?.type === 'k') {
+    return { board: next, hand: nextHand }
+  }
   const forced = mustPromote(piece, move.toR, side)
-  const canPromo = !piece.promoted && piece.type !== 'k' && piece.type !== 'g' && inPromoZone(move.toR, side)
-  const promoted = piece.promoted || forced || (canPromo && move.promote !== false)
+  const promoted = piece.promoted || forced || (canPromote(piece, move.fromR, move.toR) && move.promote === true)
 
   next[move.toR][move.toC] = { ...piece, promoted }
-  next[move.fromR!][move.fromC!] = null
+  next[move.fromR][move.fromC] = null
 
   if (cap) {
     const captured: PieceType = cap.type

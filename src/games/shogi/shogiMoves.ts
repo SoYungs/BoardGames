@@ -1,6 +1,6 @@
 import type { Board, Hand, Move, Piece, PieceType, Side } from './shogiTypes'
 import { COLS, PIECE_VALUE, ROWS } from './shogiTypes'
-import { applyShogiMove } from './shogiBoard'
+import { applyShogiMove, canPromote, mustPromote } from './shogiBoard'
 
 const FWD: Record<Side, number> = { sente: -1, gote: 1 }
 
@@ -18,8 +18,7 @@ function goldMoves(board: Board, r: number, c: number, side: Side, out: Move[], 
     [f, 1],
     [0, -1],
     [0, 1],
-    [-f, -1],
-    [-f, 1],
+    [-f, 0],
   ]) {
     pushIf(board, r + dr, c + dc, side, out, fr, fc)
   }
@@ -173,6 +172,7 @@ export function dropMoves(board: Board, hand: Hand, side: Side): Move[] {
   const out: Move[] = []
   const types = new Set(hand[side])
   for (const type of types) {
+    if (type === 'k') continue
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         if (board[r][c]) continue
@@ -193,11 +193,12 @@ export function dropMoves(board: Board, hand: Hand, side: Side): Move[] {
 }
 
 export function legalMovesFrom(board: Board, r: number, c: number): Move[] {
-  const piece = board[r][c]
+  const piece = board[r]?.[c]
   if (!piece) return []
   const raw: Move[] = []
   movesForPiece(board, r, c, piece, raw)
-  return raw
+  // Promoted major pieces include some overlapping one-step rays.
+  return [...new Map(raw.map((m) => [`${m.toR},${m.toC}`, m])).values()]
 }
 
 export function findKing(board: Board, side: Side): [number, number] | null {
@@ -227,12 +228,36 @@ export function inCheck(board: Board, side: Side): boolean {
 }
 
 export function legalMovesFromChecked(board: Board, hand: Hand, r: number, c: number): Move[] {
-  const piece = board[r][c]
+  const piece = board[r]?.[c]
   if (!piece) return []
-  return legalMovesFrom(board, r, c).filter((m) => {
+  const moves = legalMovesFrom(board, r, c).flatMap((m) => {
+    if (board[m.toR][m.toC]?.type === 'k') return []
+    if (mustPromote(piece, m.toR, piece.side)) return [{ ...m, promote: true }]
+    if (canPromote(piece, r, m.toR)) return [{ ...m, promote: false }, { ...m, promote: true }]
+    return [m]
+  })
+  return moves.filter((m) => {
     const { board: next } = applyShogiMove(board, hand, m, piece.side)
     return !inCheck(next, piece.side)
   })
+}
+
+function pawnDropMates(board: Board, hand: Hand, side: Side, move: Move): boolean {
+  if (move.dropType !== 'p') return false
+  const opponent: Side = side === 'sente' ? 'gote' : 'sente'
+  const king = findKing(board, opponent)
+  if (!king || king[0] !== move.toR + FWD[side] || king[1] !== move.toC) return false
+
+  // A pawn checks the adjacent square, so no dropped piece can interpose.
+  // Every possible reply must move the king or capture the checking pawn.
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (board[r][c]?.side === opponent && legalMovesFromChecked(board, hand, r, c).length > 0) {
+        return false
+      }
+    }
+  }
+  return true
 }
 
 export function allLegalMovesChecked(board: Board, hand: Hand, side: Side): Move[] {
@@ -245,8 +270,8 @@ export function allLegalMovesChecked(board: Board, hand: Hand, side: Side): Move
   }
   out.push(
     ...dropMoves(board, hand, side).filter((m) => {
-      const { board: next } = applyShogiMove(board, hand, m, side)
-      return !inCheck(next, side)
+      const { board: next, hand: nextHand } = applyShogiMove(board, hand, m, side)
+      return !inCheck(next, side) && !pawnDropMates(next, nextHand, side, m)
     }),
   )
   return out
@@ -260,6 +285,7 @@ export function pickAiMoveShogi(board: Board, hand: Hand, side: Side): Move | nu
     const cap = board[m.toR]?.[m.toC]
     let s = cap ? PIECE_VALUE[cap.type] * 3 : 0
     if (m.dropType) s += PIECE_VALUE[m.dropType]
+    if (m.promote) s += 8
     if (inCheck(next, side === 'sente' ? 'gote' : 'sente')) s += 12
     return { m, s: s + Math.random() * 4 }
   })

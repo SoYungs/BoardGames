@@ -1,169 +1,55 @@
-import { useCallback, useMemo, useState } from 'react'
+import { GameResult } from '../../components/GameResult'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import {
-  GOMOKU_SIZE,
-  type Cell,
-  emptyBoard,
-  checkWin,
-  pickAiMove,
-} from './gomokuLogic'
+import { ResponsiveBoard } from '../../components/ResponsiveBoard'
+import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { GOMOKU_SIZE, type Cell, emptyBoard, checkWin, isBoardFull } from './gomokuLogic'
 
 type Mode = 'local' | 'ai'
+type Snapshot = { board: Cell[][]; turn: 1 | 2; lastMove: { r: number; c: number } | null; winner: 0 | 1 | 2 | 'draw' }
+type State = Snapshot & { history: Snapshot[] }
+const initialState = (): State => ({ board: emptyBoard(), turn: 1, lastMove: null, winner: 0, history: [] })
 
-const labels: Record<Cell, string> = { 0: '', 1: '黑子', 2: '白子' }
-
-type GomokuSnap = {
-  board: Cell[][]
-  turn: 1 | 2
-  lastMove: { r: number; c: number } | null
-  winner: 0 | 1 | 2
-}
-
-function cloneGomokuBoard(b: Cell[][]): Cell[][] {
-  return b.map((row) => row.slice()) as Cell[][]
+function placeStone(state: State, r: number, c: number): State {
+  if (state.winner || state.board[r][c] !== 0) return state
+  const board = state.board.map(row => row.slice())
+  board[r][c] = state.turn
+  const winner = checkWin(board, r, c, state.turn) ? state.turn : isBoardFull(board) ? 'draw' : 0
+  const { history, ...snapshot } = state
+  return { board, turn: state.turn === 1 ? 2 : 1, lastMove: { r, c }, winner, history: [...history, snapshot] }
 }
 
 export function GomokuGame({ mode }: { mode: Mode }) {
-  const [board, setBoard] = useState<Cell[][]>(() => emptyBoard())
-  const [turn, setTurn] = useState<1 | 2>(1)
-  const [winner, setWinner] = useState<0 | 1 | 2>(0)
-  const [lastMove, setLastMove] = useState<{ r: number; c: number } | null>(null)
-  const [history, setHistory] = useState<GomokuSnap[]>([])
-  const aiPlayer: 1 | 2 = 2
+  const [state, setState] = useState(initialState)
+  const [aiError, setAiError] = useState(false)
+  const { board, turn, winner, lastMove, history } = state
+  useEffect(() => {
+    if (mode !== 'ai' || winner || turn !== 2) return
+    return scheduleAiMove('gomoku', { board, side: 2 }, move => {
+      if (move) setState(current => current.turn === 2 && current.board === board ? placeStone(current, ...move) : current)
+    }, 360, () => setAiError(true))
+  }, [board, mode, turn, winner])
 
-  const status = useMemo(() => {
-    if (winner) return `${labels[winner]} 获胜`
-    if (mode === 'ai' && turn === aiPlayer) return '电脑思考中…'
-    return `${labels[turn]} 下`
-  }, [winner, turn, mode, aiPlayer])
-
-  const reset = useCallback(() => {
-    setBoard(emptyBoard())
-    setTurn(1)
-    setWinner(0)
-    setLastMove(null)
-    setHistory([])
-  }, [])
-
-  const undo = useCallback(() => {
-    if (mode !== 'local' || history.length === 0) return
-    const prev = history[history.length - 1]
-    setHistory((h) => h.slice(0, -1))
-    setBoard(cloneGomokuBoard(prev.board))
-    setTurn(prev.turn)
-    setLastMove(prev.lastMove)
-    setWinner(prev.winner)
-  }, [mode, history])
-
-  const playAt = useCallback(
-    (r: number, c: number) => {
-      if (winner || board[r][c] !== 0) return
-      if (mode === 'ai' && turn === aiPlayer) return
-
-      if (mode === 'local') {
-        setHistory((h) => [
-          ...h,
-          {
-            board: cloneGomokuBoard(board),
-            turn,
-            lastMove,
-            winner,
-          },
-        ])
-      }
-
-      const next = board.map((row) => row.slice()) as Cell[][]
-      next[r][c] = turn
-      const w = checkWin(next, r, c, turn) ? turn : 0
-      setLastMove({ r, c })
-      setBoard(next)
-      if (w) {
-        setWinner(w)
-        return
-      }
-      const nextTurn = turn === 1 ? 2 : 1
-      setTurn(nextTurn)
-
-      if (mode === 'ai' && nextTurn === aiPlayer && !w) {
-        window.setTimeout(() => {
-          setBoard((cur) => {
-            const copy = cur.map((row) => row.slice()) as Cell[][]
-            const [ar, ac] = pickAiMove(copy, aiPlayer)
-            if (copy[ar][ac] !== 0) return cur
-            copy[ar][ac] = aiPlayer
-            setLastMove({ r: ar, c: ac })
-            if (checkWin(copy, ar, ac, aiPlayer)) {
-              setWinner(aiPlayer)
-            } else {
-              setTurn(1)
-            }
-            return copy
-          })
-        }, 280)
-      }
-    },
-    [board, turn, winner, mode, aiPlayer, lastMove],
-  )
-
-  const cellSize = `min(calc((100vw - 48px) / ${GOMOKU_SIZE}), 28px)`
+  const status = aiError ? '电脑计算遇到问题，请重新开始' : winner === 'draw' ? '满盘和棋' : winner ? `${winner === 1 ? '黑棋' : '白棋'} 获胜` : mode === 'ai' && turn === 2 ? '电脑思考中…' : `${turn === 1 ? '黑棋' : '白棋'} 落子`
+  const reset = () => { setAiError(false); setState(initialState()) }
+  const undo = () => setState(current => {
+    if (mode !== 'local' || !current.history.length) return current
+    return { ...current.history[current.history.length - 1], history: current.history.slice(0, -1) }
+  })
 
   return (
     <div className="gomoku-wrap">
-      <div className="gomoku-toolbar">
-        <p className="gomoku-status">{status}</p>
-        <div className="gomoku-actions">
-          {mode === 'local' && (
-            <button
-              type="button"
-              className="gomoku-undo"
-              onClick={undo}
-              disabled={history.length === 0}
-            >
-              悔棋
-            </button>
-          )}
-          <button type="button" className="gomoku-reset" onClick={reset}>
-            重新开始
-          </button>
+      <div className="gomoku-toolbar"><p className="gomoku-status" role="status" aria-live="polite" data-thinking={mode === 'ai' && turn === 2 && !winner && !aiError}>{status}</p><div className="gomoku-actions">{mode === 'local' && <button type="button" className="gomoku-undo" onClick={undo} disabled={!history.length}>悔棋</button>}<button type="button" className="gomoku-reset" onClick={reset}>重新开始</button></div></div>
+      <GameResult result={winner ? status : null} onRestart={reset} />
+      <p className="gomoku-hint">{mode === 'ai' ? '你执黑棋先手 · 电脑执白棋' : '黑棋先手 · 轮流落子'}<span className="move-count">第 {history.length + (winner ? 0 : 1)} 手</span></p>
+      <ResponsiveBoard width={510} height={510}>
+        <div className="gomoku-board" style={{ '--cell': '32px', '--size': GOMOKU_SIZE } as CSSProperties} role="group" aria-label="五子棋棋盘">
+          {board.map((row, r) => row.map((cell, c) => <button key={`${r}-${c}`} type="button" className={`gomoku-cell ${lastMove?.r === r && lastMove.c === c ? 'last-move' : ''}`} aria-label={`${r + 1} 行 ${c + 1} 列，${cell ? cell === 1 ? '黑棋' : '白棋' : '空位'}`} disabled={cell !== 0 || !!winner || (mode === 'ai' && turn === 2)} onClick={() => setState(current => (mode === 'ai' && current.turn === 2) ? current : placeStone(current, r, c))}>
+            {[3, 7, 11].includes(r) && [3, 7, 11].includes(c) && <span className="gomoku-star" />}
+            <AnimatePresence>{cell !== 0 && <motion.span className={`gomoku-stone ${cell === 1 ? 'black' : 'white'}`} initial={{ scale: .5, opacity: 0, y: -5 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: .6, opacity: 0 }} transition={{ type: 'spring', stiffness: 450, damping: 25 }} />}</AnimatePresence>
+          </button>))}
         </div>
-      </div>
-      {mode === 'ai' && (
-        <p className="gomoku-hint">你是黑棋先手；电脑执白棋。</p>
-      )}
-      <div
-        className="gomoku-board"
-        style={
-          {
-            '--cell': cellSize,
-            '--size': GOMOKU_SIZE,
-          } as React.CSSProperties
-        }
-      >
-        {board.map((row, r) =>
-          row.map((cell, c) => (
-            <button
-              key={`${r}-${c}`}
-              type="button"
-              className={`gomoku-cell ${lastMove?.r === r && lastMove?.c === c ? 'last-move' : ''}`}
-              aria-label={`${r + 1} 行 ${c + 1} 列`}
-              disabled={cell !== 0 || winner !== 0 || (mode === 'ai' && turn === aiPlayer)}
-              onClick={() => playAt(r, c)}
-            >
-              <AnimatePresence>
-                {cell !== 0 && (
-                  <motion.span
-                    className={`gomoku-stone ${cell === 1 ? 'black' : 'white'}`}
-                    initial={{ scale: 0.35, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.2, opacity: 0 }}
-                    transition={{ type: 'spring', stiffness: 520, damping: 28 }}
-                  />
-                )}
-              </AnimatePresence>
-            </button>
-          )),
-        )}
-      </div>
+      </ResponsiveBoard>
     </div>
   )
 }

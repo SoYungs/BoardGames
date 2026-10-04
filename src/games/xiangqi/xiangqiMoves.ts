@@ -331,6 +331,12 @@ export function allLegalMovesChecked(board: Board, side: Side): Move[] {
   return out
 }
 
+/** 象棋的将死和困毙都判无合法走法的一方负。 */
+export function getXiangqiWinner(board: Board, sideToMove: Side): Side | null {
+  if (allLegalMovesChecked(board, sideToMove).length > 0) return null
+  return sideToMove === 'red' ? 'black' : 'red'
+}
+
 function orderMovesCapturesFirst(board: Board, moves: Move[]): Move[] {
   return [...moves].sort((a, b) => {
     const ca = board[a.toR][a.toC]
@@ -347,6 +353,22 @@ function evaluatePos(board: Board, rootSide: Side): number {
 }
 
 const MATE = 8_000_000
+const SEARCH_TIMEOUT = Symbol('xiangqi search timeout')
+
+function checkSearchDeadline(deadline: number) {
+  if (performance.now() >= deadline) throw SEARCH_TIMEOUT
+}
+
+function searchMoves(board: Board, side: Side, deadline: number): Move[] {
+  const moves: Move[] = []
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      checkSearchDeadline(deadline)
+      if (board[r][c]?.side === side) moves.push(...legalMovesFromChecked(board, r, c))
+    }
+  }
+  return orderMovesCapturesFirst(board, moves)
+}
 
 function negamaxXiangqi(
   board: Board,
@@ -355,11 +377,12 @@ function negamaxXiangqi(
   alpha: number,
   beta: number,
   rootSide: Side,
+  deadline: number,
 ): number {
-  const moves = orderMovesCapturesFirst(board, allLegalMovesChecked(board, toMove))
+  checkSearchDeadline(deadline)
+  const moves = searchMoves(board, toMove, deadline)
   if (moves.length === 0) {
-    if (inCheck(board, toMove)) return -MATE + depth
-    return 0
+    return -MATE + depth
   }
   if (depth === 0) {
     const e = evaluatePos(board, rootSide)
@@ -369,6 +392,7 @@ function negamaxXiangqi(
   const limit = depth >= 2 ? 14 : 20
   let best = -Infinity
   for (let i = 0; i < Math.min(limit, moves.length); i++) {
+    checkSearchDeadline(deadline)
     const m = moves[i]!
     const cap = board[m.toR][m.toC]
     const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
@@ -377,7 +401,7 @@ function negamaxXiangqi(
       v = MATE - depth
     } else {
       const opp: Side = toMove === 'red' ? 'black' : 'red'
-      v = -negamaxXiangqi(next, opp, depth - 1, -beta, -alpha, rootSide)
+      v = -negamaxXiangqi(next, opp, depth - 1, -beta, -alpha, rootSide, deadline)
     }
     if (v > best) best = v
     if (v > alpha) alpha = v
@@ -386,24 +410,34 @@ function negamaxXiangqi(
   return best
 }
 
-export function pickAiMoveXiangqi(board: Board, side: Side): Move | null {
+export function pickAiMoveXiangqi(board: Board, side: Side, budgetMs = 650): Move | null {
+  const deadline = performance.now() + Math.max(0, budgetMs)
   const moves = allLegalMovesChecked(board, side)
   if (moves.length === 0) return null
   const sorted = orderMovesCapturesFirst(board, moves)
-  const rootLimit = Math.min(20, sorted.length)
+  const tieBreakers = new Map(sorted.map((move) => [move, Math.random() * 2.5]))
   let best: Move = sorted[0]!
-  let bestScore = -Infinity
-  for (let i = 0; i < rootLimit; i++) {
-    const m = sorted[i]!
-    const cap = board[m.toR][m.toC]
-    const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
-    if (cap?.type === 'k') return m
-    const opp: Side = side === 'red' ? 'black' : 'red'
-    const sc = -negamaxXiangqi(next, opp, 2, -MATE, MATE, side)
-    const noise = Math.random() * 2.5
-    if (sc + noise > bestScore) {
-      bestScore = sc + noise
-      best = m
+
+  for (let depth = 1; depth <= 3; depth++) {
+    let roundBest = best
+    let roundScore = -Infinity
+    try {
+      for (const m of sorted) {
+        checkSearchDeadline(deadline)
+        const cap = board[m.toR][m.toC]
+        if (cap?.type === 'k') return m
+        const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
+        const opp: Side = side === 'red' ? 'black' : 'red'
+        const score = -negamaxXiangqi(next, opp, depth - 1, -MATE, MATE, side, deadline) + tieBreakers.get(m)!
+        if (score > roundScore) {
+          roundScore = score
+          roundBest = m
+        }
+      }
+      best = roundBest
+    } catch (error) {
+      if (error !== SEARCH_TIMEOUT) throw error
+      break
     }
   }
   return best

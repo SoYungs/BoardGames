@@ -1,5 +1,5 @@
 import type { Board, GameMeta, Move, Piece, Side } from './chessTypes'
-import { COLS, PIECE_VALUE, ROWS } from './chessTypes'
+import { COLS, PIECE_VALUE, PROMOTION_PIECES, ROWS } from './chessTypes'
 import { applyMove } from './chessBoard'
 
 function pushIfEmptyOrEnemy(
@@ -68,9 +68,16 @@ function pawnMoves(board: Board, meta: GameMeta, r: number, c: number, side: Sid
   const promoRow = side === 'white' ? 0 : 7
   const nr = r + dir
   if (nr < 0 || nr >= ROWS) return
+  const addPawnMove = (toC: number) => {
+    const move = { fromR: r, fromC: c, toR: nr, toC }
+    if (nr === promoRow) {
+      for (const promotion of PROMOTION_PIECES) out.push({ ...move, promotion })
+    } else {
+      out.push(move)
+    }
+  }
   if (!board[nr][c]) {
-    const promo = nr === promoRow ? 'q' as const : undefined
-    out.push({ fromR: r, fromC: c, toR: nr, toC: c, promotion: promo })
+    addPawnMove(c)
     if (r === startRow) {
       const nr2 = r + 2 * dir
       if (!board[nr2][c]) out.push({ fromR: r, fromC: c, toR: nr2, toC: c })
@@ -81,8 +88,7 @@ function pawnMoves(board: Board, meta: GameMeta, r: number, c: number, side: Sid
     if (nc < 0 || nc >= COLS) continue
     const target = board[nr][nc]
     if (target && target.side !== side) {
-      const promo = nr === promoRow ? 'q' as const : undefined
-      out.push({ fromR: r, fromC: c, toR: nr, toC: nc, promotion: promo })
+      addPawnMove(nc)
     }
     if (
       meta.enPassant &&
@@ -254,6 +260,22 @@ function orderMovesCapturesFirst(board: Board, moves: Move[]): Move[] {
 }
 
 const MATE = 8_000_000
+const SEARCH_TIMEOUT = Symbol('chess search timeout')
+
+function checkSearchDeadline(deadline: number) {
+  if (performance.now() >= deadline) throw SEARCH_TIMEOUT
+}
+
+function searchMoves(board: Board, meta: GameMeta, side: Side, deadline: number): Move[] {
+  const moves: Move[] = []
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      checkSearchDeadline(deadline)
+      if (board[r][c]?.side === side) moves.push(...legalMovesFromChecked(board, meta, r, c))
+    }
+  }
+  return orderMovesCapturesFirst(board, moves)
+}
 
 function evaluateMaterial(board: Board, side: Side): number {
   let s = 0
@@ -274,8 +296,10 @@ function negamaxChess(
   alpha: number,
   beta: number,
   rootSide: Side,
+  deadline: number,
 ): number {
-  const moves = orderMovesCapturesFirst(board, allLegalMovesChecked(board, meta, toMove))
+  checkSearchDeadline(deadline)
+  const moves = searchMoves(board, meta, toMove, deadline)
   if (moves.length === 0) {
     if (inCheck(board, toMove)) return -MATE + depth
     return 0
@@ -287,6 +311,7 @@ function negamaxChess(
   let best = -Infinity
   const limit = depth >= 2 ? 14 : 18
   for (let i = 0; i < Math.min(limit, moves.length); i++) {
+    checkSearchDeadline(deadline)
     const m = moves[i]!
     const { board: next, meta: nextMeta } = applyMove(board, meta, m)
     const cap = board[m.toR][m.toC]
@@ -295,7 +320,7 @@ function negamaxChess(
       v = MATE - depth
     } else {
       const opp: Side = toMove === 'white' ? 'black' : 'white'
-      v = -negamaxChess(next, nextMeta, opp, depth - 1, -beta, -alpha, rootSide)
+      v = -negamaxChess(next, nextMeta, opp, depth - 1, -beta, -alpha, rootSide, deadline)
     }
     if (v > best) best = v
     if (v > alpha) alpha = v
@@ -304,23 +329,36 @@ function negamaxChess(
   return best
 }
 
-export function pickAiMoveChess(board: Board, meta: GameMeta, side: Side): Move | null {
+export function pickAiMoveChess(board: Board, meta: GameMeta, side: Side, budgetMs = 650): Move | null {
+  const deadline = performance.now() + Math.max(0, budgetMs)
   const moves = allLegalMovesChecked(board, meta, side)
   if (moves.length === 0) return null
   const sorted = orderMovesCapturesFirst(board, moves)
+  const tieBreakers = new Map(sorted.map((move) => [move, Math.random() * 2]))
   let best = sorted[0]!
-  let bestScore = -Infinity
-  for (let i = 0; i < Math.min(18, sorted.length); i++) {
-    const m = sorted[i]!
-    const cap = board[m.toR][m.toC]
-    const { board: next, meta: nextMeta } = applyMove(board, meta, m)
-    if (cap?.type === 'k') return m
-    const opp: Side = side === 'white' ? 'black' : 'white'
-    const sc = -negamaxChess(next, nextMeta, opp, 2, -MATE, MATE, side)
-    const noise = Math.random() * 2
-    if (sc + noise > bestScore) {
-      bestScore = sc + noise
-      best = m
+
+  // Only a completed round can replace the last best move: every root
+  // candidate gets the same search depth before a deeper round starts.
+  for (let depth = 1; depth <= 3; depth++) {
+    let roundBest = best
+    let roundScore = -Infinity
+    try {
+      for (const m of sorted) {
+        checkSearchDeadline(deadline)
+        const cap = board[m.toR][m.toC]
+        if (cap?.type === 'k') return m
+        const { board: next, meta: nextMeta } = applyMove(board, meta, m)
+        const opp: Side = side === 'white' ? 'black' : 'white'
+        const score = -negamaxChess(next, nextMeta, opp, depth - 1, -MATE, MATE, side, deadline) + tieBreakers.get(m)!
+        if (score > roundScore) {
+          roundScore = score
+          roundBest = m
+        }
+      }
+      best = roundBest
+    } catch (error) {
+      if (error !== SEARCH_TIMEOUT) throw error
+      break
     }
   }
   return best

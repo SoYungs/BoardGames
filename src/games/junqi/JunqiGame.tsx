@@ -1,12 +1,13 @@
+import { GameResult } from '../../components/GameResult'
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
   useState,
   type CSSProperties,
 } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import {
   applyMove,
   createInitialBoard,
@@ -18,8 +19,8 @@ import {
 } from './junqiBoard'
 import { resolveCombat } from './junqiCombat'
 import type { Board, Move, Side } from './junqiTypes'
-import { COLS, ROWS, pieceLabel } from './junqiTypes'
-import { legalMovesFrom, pickAiMoveJunqi } from './junqiMoves'
+import { COLS, ROWS, pieceLabel, pieceName } from './junqiTypes'
+import { getWinnerJunqi, legalMovesFrom, pickAiMoveJunqi } from './junqiMoves'
 
 type Mode = 'local' | 'ai'
 
@@ -43,10 +44,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   const [lastMove, setLastMove] = useState<Move | null>(null)
   const [history, setHistory] = useState<JunqiSnap[]>([])
 
-  const boardRef = useRef(board)
-  useLayoutEffect(() => {
-    boardRef.current = board
-  }, [board])
+  const reduceMotion = useReducedMotion()
 
   const humanSide: Side = 'red'
   const aiSide: Side = 'blue'
@@ -60,8 +58,9 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   const status = useMemo(() => {
     if (winner) return `${winner === 'red' ? '红方' : '蓝方'} 胜`
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
-    return `${turn === 'red' ? '红方' : '蓝方'} 行棋（点击己方棋子后点目标格）`
-  }, [winner, mode, turn, aiSide])
+    if (selected && targets.length === 0) return '该棋子不可移动 · 换一枚棋子'
+    return `${turn === 'red' ? '红方' : '蓝方'}行棋 · ${selected ? '选择落点' : '选择棋子'}`
+  }, [winner, mode, turn, aiSide, selected, targets.length])
 
   const reset = useCallback(() => {
     setBoard(createInitialBoard())
@@ -97,15 +96,9 @@ export function JunqiGame({ mode }: { mode: Mode }) {
       setBoard(next)
       setSelected(null)
 
-      if (defender?.type === 'flag' && result === 'attacker') {
-        setWinner(turn)
-        return
-      }
-      if (!next.flat().some((p) => p?.type === 'flag' && p.side === (turn === 'red' ? 'blue' : 'red'))) {
-        setWinner(turn)
-        return
-      }
-      setTurn(turn === 'red' ? 'blue' : 'red')
+      const nextTurn = turn === 'red' ? 'blue' : 'red'
+      setWinner(getWinnerJunqi(next, nextTurn))
+      setTurn(nextTurn)
     },
     [board, turn, mode, lastMove, winner, selected],
   )
@@ -113,31 +106,15 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   useEffect(() => {
     if (winner || mode !== 'ai' || turn !== aiSide) return
     const t = window.setTimeout(() => {
-      const cur = boardRef.current
-      const m = pickAiMoveJunqi(cur, aiSide)
+      const m = pickAiMoveJunqi(board, aiSide)
       if (!m) {
         setWinner(humanSide)
         return
       }
-      const attacker = cur[m.fromR][m.fromC]!
-      const defender = cur[m.toR][m.toC]
-      let result: import('./junqiCombat').CombatResult = 'none'
-      if (defender) result = resolveCombat(attacker, defender)
-      const next = applyMove(cur, m, result)
-      setLastMove(m)
-      setBoard(next)
-      if (defender?.type === 'flag' && result === 'attacker') {
-        setWinner(aiSide)
-        return
-      }
-      if (!next.flat().some((p) => p?.type === 'flag' && p.side === 'red')) {
-        setWinner(aiSide)
-        return
-      }
-      setTurn('red')
+      tryMove(m)
     }, 400)
     return () => window.clearTimeout(t)
-  }, [winner, mode, turn, aiSide, humanSide])
+  }, [winner, mode, turn, board, aiSide, humanSide, tryMove])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return
@@ -177,120 +154,149 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   return (
     <div className="junqi-wrap">
       <JunqiToolbar status={status} mode={mode} undo={undo} historyLen={history.length} reset={reset} />
+      <GameResult result={winner ? status : null} onRestart={reset} />
       <p className="junqi-hint">
         {mode === 'ai'
-          ? '你执红方（下方）。对方未翻开的棋子显示为「?」，交战后才亮明。'
-          : '本地双人：双方均为暗棋「?」；只有轮到你走棋且选中己方棋子时，才显示该子番号。'}
+          ? '你执红方 · 对手暗子在交战后亮明'
+          : '轮到你时，选中己方暗子可查看番号'}
       </p>
-      <div
-        className="junqi-board-outer"
-        style={{ ['--jq-w' as string]: `${w}px`, ['--jq-h' as string]: `${h}px` } as CSSProperties}
-      >
-        <div className="junqi-board-surface" style={{ width: w, height: h }}>
-          <svg className="junqi-svg" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden>
-            <rect x={0} y={0} width={w} height={h} className="junqi-bg" rx={10} />
-            {Array.from({ length: ROWS + 1 }, (_, j) => (
+      <p className="junqi-hint">6×12 简化军棋 · 行营安全，本营不可移动；夺旗或困住对手获胜。</p>
+      <ResponsiveBoard width={w + 22} height={h + 22}>
+        <div
+          className="junqi-board-outer"
+          style={{ ['--jq-w' as string]: `${w}px`, ['--jq-h' as string]: `${h}px` } as CSSProperties}
+        >
+          <div className="junqi-board-surface" style={{ width: w, height: h }}>
+            <svg className="junqi-svg" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden>
+              <rect x={0} y={0} width={w} height={h} className="junqi-bg" rx={10} />
+              {Array.from({ length: ROWS + 1 }, (_, j) => (
+                <line
+                  key={`h${j}`}
+                  x1={PAD}
+                  y1={PAD + j * CELL_H}
+                  x2={PAD + COLS * CELL_W}
+                  y2={PAD + j * CELL_H}
+                  className="junqi-line"
+                />
+              ))}
+              {Array.from({ length: COLS + 1 }, (_, i) => (
+                <line
+                  key={`v${i}`}
+                  x1={PAD + i * CELL_W}
+                  y1={PAD}
+                  x2={PAD + i * CELL_W}
+                  y2={PAD + ROWS * CELL_H}
+                  className="junqi-line"
+                />
+              ))}
               <line
-                key={`h${j}`}
                 x1={PAD}
-                y1={PAD + j * CELL_H}
+                y1={PAD + 2.5 * CELL_H}
                 x2={PAD + COLS * CELL_W}
-                y2={PAD + j * CELL_H}
-                className="junqi-line"
+                y2={PAD + 2.5 * CELL_H}
+                className="junqi-frontline"
               />
-            ))}
-            {Array.from({ length: COLS + 1 }, (_, i) => (
-              <line
-                key={`v${i}`}
-                x1={PAD + i * CELL_W}
-                y1={PAD}
-                x2={PAD + i * CELL_W}
-                y2={PAD + ROWS * CELL_H}
-                className="junqi-line"
-              />
-            ))}
-            <line
-              x1={PAD}
-              y1={PAD + 2.5 * CELL_H}
-              x2={PAD + COLS * CELL_W}
-              y2={PAD + 2.5 * CELL_H}
-              className="junqi-frontline"
-            />
-            {Array.from({ length: ROWS }, (_, r) =>
-              Array.from({ length: COLS }, (_, c) =>
-                isRailway(r, c) ? (
-                  <rect
-                    key={`rail-${r}-${c}`}
-                    x={PAD + c * CELL_W + 2}
-                    y={PAD + r * CELL_H + 2}
-                    width={CELL_W - 4}
-                    height={CELL_H - 4}
-                    className="junqi-rail"
-                    rx={4}
-                  />
-                ) : null,
-              ),
-            )}
-            {Array.from({ length: ROWS }, (_, r) =>
-              Array.from({ length: COLS }, (_, c) =>
-                isCamp(r, c) ? (
-                  <circle
-                    key={`camp-${r}-${c}`}
-                    cx={PAD + c * CELL_W + CELL_W / 2}
-                    cy={PAD + r * CELL_H + CELL_H / 2}
-                    r={12}
-                    className="junqi-camp-mark"
-                  />
-                ) : null,
-              ),
-            )}
-          </svg>
-          <div className="junqi-grid" style={{ width: w, height: h }}>
-            {board.map((row, r) =>
-              row.map((piece, c) =>
-                piece ? (
-                  <div
-                    key={piece.id}
-                    className={`junqi-piece ${piece.side} ${piece.revealed ? 'revealed' : 'hidden'}`}
-                    style={{
-                      left: PAD + c * CELL_W + 4,
-                      top: PAD + r * CELL_H + 4,
-                      width: CELL_W - 8,
-                      height: CELL_H - 8,
-                    }}
-                  >
-                    {displayLabel(piece, r, c)}
-                  </div>
-                ) : null,
-              ),
-            )}
-            {Array.from({ length: ROWS }, (_, r) =>
-              Array.from({ length: COLS }, (_, c) => {
-                const isSel = selected?.[0] === r && selected?.[1] === c
-                const isTarget = targets.some((m) => m.toR === r && m.toC === c)
-                const isLastFrom = lastMove?.fromR === r && lastMove?.fromC === c
-                const isLastTo = lastMove?.toR === r && lastMove?.toC === c
-                const hq = isHeadquarters(r, c)
-                const front = isFrontline(r, c)
-                return (
-                  <button
-                    key={`${r}-${c}`}
-                    type="button"
-                    className={`junqi-cell ${hq ? 'hq' : ''} ${front ? 'front' : ''} ${isSel ? 'selected' : ''} ${isTarget ? 'target' : ''} ${isLastFrom ? 'last-from' : ''} ${isLastTo ? 'last-to' : ''}`}
-                    style={{
-                      left: PAD + c * CELL_W,
-                      top: PAD + r * CELL_H,
-                      width: CELL_W,
-                      height: CELL_H,
-                    }}
-                    onClick={() => onCellClick(r, c)}
-                  />
-                )
-              }),
-            )}
+              {Array.from({ length: ROWS }, (_, r) =>
+                Array.from({ length: COLS }, (_, c) =>
+                  isRailway(r, c) ? (
+                    <rect
+                      key={`rail-${r}-${c}`}
+                      x={PAD + c * CELL_W + 2}
+                      y={PAD + r * CELL_H + 2}
+                      width={CELL_W - 4}
+                      height={CELL_H - 4}
+                      className="junqi-rail"
+                      rx={4}
+                    />
+                  ) : null,
+                ),
+              )}
+              {Array.from({ length: ROWS }, (_, r) =>
+                Array.from({ length: COLS }, (_, c) =>
+                  isCamp(r, c) ? (
+                    <circle
+                      key={`camp-${r}-${c}`}
+                      cx={PAD + c * CELL_W + CELL_W / 2}
+                      cy={PAD + r * CELL_H + CELL_H / 2}
+                      r={12}
+                      className="junqi-camp-mark"
+                    />
+                  ) : null,
+                ),
+              )}
+            </svg>
+            <div className="junqi-grid" style={{ width: w, height: h }}>
+              <AnimatePresence initial={false}>
+                {board.flatMap((row, r) =>
+                  row.flatMap((piece, c) =>
+                    piece ? (
+                      <motion.div
+                        key={piece.id}
+                        className={`junqi-piece ${piece.side} ${piece.revealed ? 'revealed' : 'hidden'}`}
+                        aria-hidden="true"
+                        initial={{
+                          left: PAD + c * CELL_W + 4,
+                          top: PAD + r * CELL_H + 4,
+                          scale: 0.7,
+                          opacity: 0,
+                        }}
+                        animate={{
+                          left: PAD + c * CELL_W + 4,
+                          top: PAD + r * CELL_H + 4,
+                          scale: 1,
+                          opacity: 1,
+                        }}
+                        exit={{ scale: 0.65, opacity: 0 }}
+                        transition={reduceMotion
+                          ? { duration: 0 }
+                          : { type: 'spring', stiffness: 380, damping: 29 }}
+                        style={{
+                          width: CELL_W - 8,
+                          height: CELL_H - 8,
+                        }}
+                      >
+                        {displayLabel(piece, r, c)}
+                      </motion.div>
+                    ) : [],
+                  ),
+                )}
+              </AnimatePresence>
+              {Array.from({ length: ROWS }, (_, r) =>
+                Array.from({ length: COLS }, (_, c) => {
+                  const isSel = selected?.[0] === r && selected?.[1] === c
+                  const isTarget = targets.some((m) => m.toR === r && m.toC === c)
+                  const isLastFrom = lastMove?.fromR === r && lastMove?.fromC === c
+                  const isLastTo = lastMove?.toR === r && lastMove?.toC === c
+                  const hq = isHeadquarters(r, c)
+                  const front = isFrontline(r)
+                  const piece = board[r][c]
+                  const visibleLabel = piece ? displayLabel(piece, r, c) : null
+                  const pieceDescription = piece
+                    ? `${piece.side === 'red' ? '红方' : '蓝方'}${visibleLabel === '?' ? '暗棋' : pieceName(piece)}`
+                    : '空位'
+                  return (
+                    <button
+                      key={`${r}-${c}`}
+                      type="button"
+                      aria-label={`${r + 1}行${c + 1}列，${pieceDescription}${hq ? '，大本营' : isCamp(r, c) ? '，行营' : ''}${isTarget ? '，可行棋' : ''}`}
+                      aria-pressed={isSel}
+                      disabled={winner !== null || (mode === 'ai' && turn === aiSide)}
+                      className={`junqi-cell ${hq ? 'hq' : ''} ${front ? 'front' : ''} ${isSel ? 'selected' : ''} ${isTarget ? 'target' : ''} ${isLastFrom ? 'last-from' : ''} ${isLastTo ? 'last-to' : ''}`}
+                      style={{
+                        left: PAD + c * CELL_W,
+                        top: PAD + r * CELL_H,
+                        width: CELL_W,
+                        height: CELL_H,
+                      }}
+                      onClick={() => onCellClick(r, c)}
+                    />
+                  )
+                }),
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      </ResponsiveBoard>
     </div>
   )
 }
@@ -305,7 +311,7 @@ function JunqiToolbar(props: {
   const { status, mode, undo, historyLen, reset } = props
   return (
     <div className="junqi-toolbar">
-      <p className="junqi-status">{status}</p>
+      <p className="junqi-status" role="status" aria-live="polite" data-thinking={status.includes('思考')}>{status}</p>
       <div className="junqi-actions">
         {mode === 'local' && (
           <button type="button" className="junqi-undo" onClick={undo} disabled={historyLen === 0}>
@@ -313,7 +319,7 @@ function JunqiToolbar(props: {
           </button>
         )}
         <button type="button" className="junqi-reset" onClick={reset}>
-          重新开始
+          重开
         </button>
       </div>
     </div>

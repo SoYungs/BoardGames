@@ -1,17 +1,17 @@
 name: Deploy to GitHub Pages
 
 on:
+  pull_request:
+    branches: [main, master]
   push:
     branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,6 +24,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm test
       - run: npm run build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
@@ -32,7 +34,11 @@ jobs:
           path: dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     runs-on: ubuntu-latest
     environment:
       name: github-pages

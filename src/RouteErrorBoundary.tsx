@@ -19,13 +19,13 @@ export class RouteErrorBoundary extends Component<Props, State> {
       return (
         <main className="app-main" style={{ maxWidth: 560 }}>
           <h1 className="page-title">页面加载出错</h1>
-          <p className="page-sub">请把下面信息截图发开发者，或尝试刷新。</p>
+          <p className="page-sub">加载时遇到了一点问题，请重新加载后再试。</p>
           <pre
             style={{
               padding: 16,
               borderRadius: 12,
-              background: '#1c2433',
-              border: '1px solid #2a3548',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--stroke)',
               overflow: 'auto',
               fontSize: 13,
             }}

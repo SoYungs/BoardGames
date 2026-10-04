@@ -64,8 +64,27 @@ const LABEL: Record<PieceType, string> = {
   flag: '旗',
 }
 
+const NAME: Record<PieceType, string> = {
+  commander: '司令',
+  army: '军长',
+  division: '师长',
+  brigade: '旅长',
+  regiment: '团长',
+  battalion: '营长',
+  company: '连长',
+  platoon: '排长',
+  engineer: '工兵',
+  bomb: '炸弹',
+  mine: '地雷',
+  flag: '军旗',
+}
+
 export function pieceLabel(p: Piece): string {
   return LABEL[p.type]
+}
+
+export function pieceName(p: Piece): string {
+  return NAME[p.type]
 }
 
 export function piecePool(): PieceType[] {
