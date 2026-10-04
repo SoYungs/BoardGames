@@ -11,7 +11,7 @@ class WorkerStub {
   static instances: WorkerStub[] = []
   static constructorError: Error | null = null
   static postMessageError: Error | null = null
-  onmessage: ((event: { data: { move: [number, number] | XiangqiMove; analysis?: XiangqiAnalysis } }) => void) | null = null
+  onmessage: ((event: { data: unknown }) => void) | null = null
   onerror: ((event: { preventDefault: () => void; message?: string }) => void) | null = null
   onmessageerror: (() => void) | null = null
   terminated = false
@@ -247,5 +247,103 @@ test('non-xiangqi tasks keep their original input and timing contract', () => {
     advance()
     assert.deepEqual(WorkerStub.instances[0].request, { game: 'gomoku', input })
     assert.equal((WorkerStub.instances[0].request as { input: unknown }).input, input)
+  })
+})
+
+test('malformed replies settle as recoverable failures instead of disabling the watchdog silently', () => {
+  for (const data of [null, undefined, {}, { analysis: {} }, { move: undefined }]) {
+    withWorkerEnvironment((advance, pending) => {
+      const failures: AiFailure[] = []
+      scheduleAiMove('gomoku', { board: emptyBoard(), side: 2 }, () => assert.fail('malformed reply applied'), 140, failure => failures.push(failure))
+      advance()
+      const worker = WorkerStub.instances[0]
+      assert.doesNotThrow(() => worker.onmessage?.({ data }))
+      assert.equal(failures.length, 1)
+      assert.equal(failures[0].kind, 'message_error')
+      assert.equal(worker.terminated, true)
+      assert.equal(pending(), 0)
+      worker.onmessage?.({ data: { move: [7, 7] } })
+      worker.onerror?.({ preventDefault() {} })
+      advance()
+      assert.equal(failures.length, 1)
+    })
+  }
+})
+
+test('a throwing move callback reports a recoverable error once and leaves no thinking worker', () => {
+  withWorkerEnvironment((advance, pending) => {
+    const failures: AiFailure[] = []
+    scheduleAiMove('gomoku', { board: emptyBoard(), side: 2 }, () => { throw new Error('move application failed') }, 140, failure => failures.push(failure))
+    advance()
+    const worker = WorkerStub.instances[0]
+    assert.doesNotThrow(() => worker.onmessage?.({ data: { move: [7, 7] } }))
+    assert.deepEqual(failures, [{ kind: 'error', message: 'move application failed' }])
+    assert.equal(worker.terminated, true)
+    assert.equal(pending(), 0)
+    worker.onmessage?.({ data: { move: [8, 8] } })
+    worker.onmessageerror?.()
+    assert.equal(failures.length, 1)
+  })
+})
+
+test('an invalid xiangqi reply can be retried with the same position and full history', () => {
+  withWorkerEnvironment((advance, pending) => {
+    const board = createInitialBoard()
+    const history = [{ board: createInitialBoard(), turn: 'red' as const }]
+    const input = { board, side: 'black' as const, history, budgetMs: 3000, maxDepth: 8 }
+    const before = structuredClone(input)
+    const failures: AiFailure[] = []
+    const replies: unknown[] = []
+    scheduleAiMove('xiangqi', input, move => replies.push(move), 140, failure => failures.push(failure))
+    advance()
+    WorkerStub.instances[0].onmessage?.({ data: { move: null } })
+    assert.equal(failures[0].kind, 'message_error')
+    assert.deepEqual(replies, [])
+    scheduleAiMove('xiangqi', input, move => replies.push(move), 140, failure => failures.push(failure))
+    advance()
+    const move = { fromR: 0, fromC: 7, toR: 2, toC: 6 }
+    WorkerStub.instances[1].onmessage?.({ data: { move } })
+    WorkerStub.instances[0].onmessage?.({ data: { move } })
+    assert.deepEqual(replies, [move])
+    assert.equal(failures.length, 1)
+    assert.deepEqual(input, before)
+    assert.equal(pending(), 0)
+  })
+})
+
+test('StrictMode setup-cleanup-setup runs one worker and applies only its current reply', () => {
+  withWorkerEnvironment((advance, pending) => {
+    const input = { board: createInitialBoard(), side: 'black' as const, budgetMs: 700, maxDepth: 4 }
+    const replies: unknown[] = []
+    const discarded = scheduleAiMove('xiangqi', input, () => assert.fail('discarded StrictMode setup applied'), 140)
+    discarded()
+    const current = scheduleAiMove('xiangqi', input, move => replies.push(move), 140)
+    advance()
+    assert.equal(WorkerStub.instances.length, 1)
+    const move = { fromR: 0, fromC: 7, toR: 2, toC: 6 }
+    WorkerStub.instances[0].onmessage?.({ data: { move } })
+    current()
+    WorkerStub.instances[0].onmessage?.({ data: { move } })
+    assert.deepEqual(replies, [move])
+    assert.equal(pending(), 0)
+  })
+})
+
+test('changing xiangqi depth cancels a running worker without accepting its late result', () => {
+  withWorkerEnvironment((advance, pending) => {
+    const input = { board: createInitialBoard(), side: 'black' as const, budgetMs: 3000, maxDepth: 8 }
+    const replies: unknown[] = []
+    const previous = scheduleAiMove('xiangqi', input, () => assert.fail('old depth result applied'), 140)
+    advance()
+    previous()
+    scheduleAiMove('xiangqi', { ...input, budgetMs: 700, maxDepth: 4 }, move => replies.push(move), 140)
+    advance()
+    const move = { fromR: 0, fromC: 7, toR: 2, toC: 6 }
+    WorkerStub.instances[0].onmessage?.({ data: { move } })
+    WorkerStub.instances[0].onerror?.({ preventDefault() {} })
+    WorkerStub.instances[1].onmessage?.({ data: { move } })
+    assert.equal(WorkerStub.instances[0].terminated, true)
+    assert.deepEqual(replies, [move])
+    assert.equal(pending(), 0)
   })
 })

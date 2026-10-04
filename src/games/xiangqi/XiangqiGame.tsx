@@ -16,6 +16,7 @@ import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove, type AiFailure } from '../../workers/scheduleAiMove'
 import { getUndoIndex } from '../undo'
+import { getXiangqiContinueIndex } from './xiangqiPractice'
 import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
 import type { XiangqiAnalysis } from './xiangqiAi'
 import type { Board, Move, Side } from './xiangqiTypes'
@@ -212,8 +213,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     }
   }
 
-  const undo = useCallback(() => {
-    const index = getUndoIndex(history, mode, humanSide)
+  const restoreHistory = useCallback((index: number) => {
     if (index < 0) return
     importSequence.current++
     aiCancelRef.current?.()
@@ -231,7 +231,11 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     setAnalysis(null)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
-  }, [mode, history, humanSide])
+  }, [mode, history])
+
+  const undo = useCallback(() => restoreHistory(getUndoIndex(history, mode, humanSide)), [restoreHistory, history, mode, humanSide])
+  const continueIndex = getXiangqiContinueIndex(history, mode, turn, repetitionResult)
+  const continuePractice = () => restoreHistory(continueIndex)
 
   const tryMove = useCallback(
     (m: Move) => {
@@ -341,7 +345,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
 
   const thinking = mode === 'ai' && turn === aiSide && !gameOver && !aiError
   const selectedPiece = selected ? board[selected[0]][selected[1]] : null
-  const detail = gameOver ? '本局结束，可悔棋继续练习或重新开始' : aiError ? '点继续计算，让电脑重新思考当前局面；已走的棋不会撤回' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
+  const detail = gameOver ? repetitionResult?.kind === 'perpetual-check' && continueIndex >= 0 ? '长将已判负，棋盘暂停；可点下方「悔棋继续练习」' : '本局结束，棋盘暂停；可悔棋继续练习或重新开始' : aiError ? '点继续计算，让电脑重新思考当前局面；已走的棋不会撤回' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
     : thinking ? '电脑正在思考，也可悔棋重新尝试' : '先选自己的棋子，再点击标记的落点'
 
   const w = PAD * 2 + CELL * (9 - 1)
@@ -400,7 +404,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       </p>
       {transferMessage && <p className="xiangqi-ai-depth-note" role="status" aria-live="polite">{transferMessage}</p>}
       {repetitionWarning && <p className="xiangqi-ai-depth-note xiangqi-repetition-warning" role="status" aria-live="polite">{repetitionWarning.kind === 'perpetual-check' ? `${repetitionWarning.offender === 'red' ? '红方' : '黑方'}正在长将，再重复相同局面将判负，请变招。` : '局面已重复一次，再次重复将判和棋；变招可避免循环。'}</p>}
-      <GameResult result={gameOver ? status : null} onRestart={reset} />
+      <GameResult result={gameOver ? status : null} onRestart={continueIndex >= 0 ? continuePractice : reset} restartLabel={continueIndex >= 0 ? '悔棋继续练习' : '再来一局'} />
+      {gameOver && repetitionResult?.kind === 'perpetual-check' && repetitionResult.offender === aiSide && mode === 'ai' && turn === aiSide && continueIndex >= 0 && <p className="xiangqi-ai-depth-note">继续练习会回到电脑最后一次重复将军之前，让电脑重新变招；普通「悔棋」仍只撤回你上一手。</p>}
       <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={selected ? 1 : 0} note={gameOver ? '本局结束。可悔棋继续练习，或重新开始。' : isCheck ? '正在被将军：先化解对将帅的威胁。' : mode === 'ai' ? '你执红方先手；绿点可走，金圈可吃。悔棋不限次数，每次回到你上一手行棋前。' : '绿点可走，金圈可吃；点击另一枚己方棋子可重新选择。'} />
       <ResponsiveBoard width={w + 22} height={h + 22}>
       <div

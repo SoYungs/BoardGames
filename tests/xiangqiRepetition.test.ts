@@ -33,6 +33,16 @@ function inspect(states: readonly XiangqiPositionRecord[]) {
   return getXiangqiRepetitionResult(states.slice(0, -1), current.board, current.turn)
 }
 
+function clocked<T>(step: number, operation: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(performance, 'now')
+  let clock = 0
+  Object.defineProperty(performance, 'now', { configurable: true, value: () => clock += step })
+  try { return operation() } finally {
+    if (descriptor) Object.defineProperty(performance, 'now', descriptor)
+    else Reflect.deleteProperty(performance, 'now')
+  }
+}
+
 // Exact 19-piece position captured from the user's stalled checking cycle.
 // The rook checks on column 4; moving it off column 4 discovers the cannon
 // check over the defending advisor. Both red advisor moves are legal evasions.
@@ -49,6 +59,14 @@ const actualGame = position([
   '....KA...',
 ])
 const cannonRookCycle = [move(9, 5, 8, 4), move(7, 4, 7, 8), move(8, 4, 9, 5), move(7, 8, 7, 4)]
+
+// The later, complete user game captured after the first repair. A rook was
+// exchanged for a bishop before the advisor/rook loop resumed in 18 pieces.
+const laterUserMoves = [
+  move(9, 5, 8, 4), move(7, 4, 7, 6), move(8, 4, 9, 5), move(6, 2, 9, 2), move(7, 0, 9, 2),
+  move(7, 6, 7, 4), move(9, 5, 8, 4), move(7, 4, 7, 2), move(8, 4, 9, 3), move(7, 2, 7, 4),
+  move(9, 3, 8, 4), move(7, 4, 7, 6), move(8, 4, 9, 5), move(7, 6, 7, 4), move(9, 5, 8, 4),
+]
 
 test('actual cannon/rook cycle is unilateral continuous check, with the checking side losing at the third occurrence', () => {
   const states = play(actualGame, 'red', cannonRookCycle, 3)
@@ -155,4 +173,91 @@ test('played history does not suppress a novel discovered-cannon mate', () => {
   assert.equal(inCheck(won, 'black'), true)
   assert.equal(allLegalMovesChecked(won, 'black').length, 0)
   assert.deepEqual({ board: after, history }, before)
+})
+
+test('AI changes a quiet second position return before a third repetition is reached', () => {
+  const board = position(['....k....', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '...K.....'])
+  const steps = [move(9, 3, 8, 3), move(0, 4, 1, 4), move(8, 3, 9, 3)]
+  const states = play(board, 'red', steps)
+  const current = states[3], history = states.slice(0, 3), returnMove = move(1, 4, 0, 4)
+  assert.deepEqual(getXiangqiRepetitionWarning([...history, current], apply(current.board, returnMove), 'red'), { kind: 'repetition-draw' })
+  for (const depth of [1, 6]) {
+    const { move: chosen } = analyzeXiangqi(current.board, 'black', 25, depth, history)
+    assert.ok(chosen)
+    assert.equal(sameMove(chosen, returnMove), false, 'AI preferred a quiet loop over another legal king square')
+    assert.ok(allLegalMovesChecked(current.board, 'black').some(candidate => sameMove(candidate, chosen)))
+  }
+})
+
+test('AI discourages its own A-B-A-B piece shuffle even when a pawn makes the board layouts new', () => {
+  const board = position(['....k....', '.........', '.........', '...r.....', '.........', '.........', 'P........', '.........', '.........', '.....K...'])
+  const steps = [move(3, 3, 3, 4), move(6, 0, 5, 0), move(3, 4, 3, 3), move(5, 0, 4, 0)]
+  const states = play(board, 'black', steps)
+  const current = states[4], history = states.slice(0, 4), bounce = move(3, 3, 3, 4)
+  const next = apply(current.board, bounce)
+  assert.ok(history.every(state => xiangqiPositionKey(state.board, state.turn) !== xiangqiPositionKey(next, 'red')), 'this fixture must exercise shuffling without a repeated whole layout')
+  const { move: chosen } = analyzeXiangqi(current.board, 'black', 25, 6, history)
+  assert.ok(chosen)
+  assert.equal(sameMove(chosen, bounce), false)
+  assert.ok(allLegalMovesChecked(current.board, 'black').some(candidate => sameMove(candidate, chosen)))
+})
+
+test('a repeated square remains available when it is the only legal check evasion', () => {
+  const board = position(['...k.a...', '....p....', '.........', '.........', '.........', '.........', '.........', '....C....', '.........', '....K....'])
+  const steps = [move(7, 4, 7, 5), move(0, 3, 0, 4), move(7, 5, 7, 4)]
+  const states = play(board, 'red', steps)
+  const current = states[3], history = states.slice(0, 3), evasion = move(0, 4, 0, 3)
+  assert.equal(inCheck(current.board, 'black'), true)
+  assert.deepEqual(allLegalMovesChecked(current.board, 'black'), [evasion])
+  assert.deepEqual(getXiangqiRepetitionWarning([...history, current], apply(current.board, evasion), 'red'), { kind: 'repetition-draw' })
+  assert.deepEqual(analyzeXiangqi(current.board, 'black', 25, 6, history).move, evasion)
+})
+
+test('the actual later user game changes at move 11 and avoids a rule-losing check after the human reply', () => {
+  const states = play(actualGame, 'red', laterUserMoves)
+  const current = states[11], history = states.slice(0, 11), original = laterUserMoves[11]
+  const repeatedCheckBoard = apply(current.board, original)
+  const humanReply = laterUserMoves[12]
+  assert.equal(getXiangqiRepetitionWarning([...history, current], repeatedCheckBoard, 'red'), null, 'the checking move itself has a new layout')
+  assert.deepEqual(getXiangqiRepetitionWarning([...history, current, { board: repeatedCheckBoard, turn: 'red' }], apply(repeatedCheckBoard, humanReply), 'black'), { kind: 'perpetual-check', winner: 'red', offender: 'black' })
+  for (const [budget, step] of [[25, .02], [25, .1], [700, 1]]) {
+    const { move: chosen } = clocked(step, () => analyzeXiangqi(current.board, 'black', budget, 8, history))
+    assert.ok(chosen)
+    assert.equal(sameMove(chosen, original), false, 'AI waited until after the human closed the long-check cycle')
+    const after = apply(current.board, chosen)
+    for (const reply of allLegalMovesChecked(after, 'red')) {
+      const response = apply(after, reply)
+      assert.ok(allLegalMovesChecked(response, 'black').length > 0, 'the fixture still has defences that avoid immediate mate')
+      const warning = getXiangqiRepetitionWarning([...history, current, { board: after, turn: 'red' }], response, 'black')
+      assert.ok(warning?.kind !== 'perpetual-check' || warning.offender !== 'black')
+    }
+  }
+})
+
+test('when every fresh move loses by mate, the AI accepts the losing position instead of prolonging its own illegal long check', () => {
+  const states = play(actualGame, 'red', laterUserMoves)
+  const current = states[13], history = states.slice(0, 13), original = laterUserMoves[13]
+  const before = structuredClone({ current, history })
+  const legal = allLegalMovesChecked(current.board, 'black')
+  assert.equal(legal.length, 29)
+  for (const candidate of legal) {
+    const after = apply(current.board, candidate), replies = allLegalMovesChecked(after, 'red')
+    const mateReplies = replies.filter(reply => !allLegalMovesChecked(apply(after, reply), 'black').length)
+    if (sameMove(candidate, original)) {
+      assert.equal(mateReplies.length, 0, 'only this checking cycle delayed the immediate ordinary mate')
+      const finish = apply(after, laterUserMoves[14])
+      assert.deepEqual(getXiangqiRepetitionResult([...history, current, { board: after, turn: 'red' }], finish, 'black'), { kind: 'perpetual-check', winner: 'red', offender: 'black' })
+    } else assert.ok(mateReplies.length > 0, 'every other legal move must allow immediate mate in this exact defeated game')
+  }
+  for (const [budget, step] of [[25, .02], [25, .1], [25, .5], [25, 2], [700, 1]]) {
+    const { move: chosen } = clocked(step, () => analyzeXiangqi(current.board, 'black', budget, 8, history))
+    assert.ok(chosen)
+    assert.ok(legal.some(candidate => sameMove(candidate, chosen)))
+    assert.equal(sameMove(chosen, original), false, 'the safety fallback treated rule-losing long check as safe')
+  }
+  const strongest = analyzeXiangqi(current.board, 'black', 3000, 8, history)
+  assert.ok(strongest.move)
+  assert.equal(sameMove(strongest.move, original), false)
+  assert.ok(strongest.analysis.elapsedMs < 3750, 'strongest search escaped its time bound')
+  assert.deepEqual({ current, history }, before)
 })
