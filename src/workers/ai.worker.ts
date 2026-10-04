@@ -1,6 +1,6 @@
 import { pickAiMove } from '../games/gomoku/gomokuLogic'
 import { pickAiMoveChess } from '../games/chess/chessMoves'
-import { pickAiMoveXiangqi } from '../games/xiangqi/xiangqiMoves'
+import { analyzeXiangqi } from '../games/xiangqi/xiangqiAi'
 import { pickAiMoveShogi } from '../games/shogi/shogiMoves'
 import { pickAiMoveJunqi } from '../games/junqi/junqiMoves'
 import { pickAiMoveGo } from '../games/go/goAi'
@@ -11,7 +11,7 @@ self.onmessage = (event: MessageEvent<AiRequest>) => {
   switch (task.game) {
     case 'gomoku': self.postMessage({ move: pickAiMove(task.input.board, task.input.side, task.input.budgetMs ?? 800) }); break
     case 'chess': self.postMessage({ move: pickAiMoveChess(task.input.board, task.input.meta, task.input.side, task.input.budgetMs ?? 800) }); break
-    case 'xiangqi': self.postMessage({ move: pickAiMoveXiangqi(task.input.board, task.input.side, task.input.budgetMs ?? 800) }); break
+    case 'xiangqi': self.postMessage(analyzeXiangqi(task.input.board, task.input.side, task.input.budgetMs ?? 3000, task.input.maxDepth ?? 8)); break
     case 'shogi': self.postMessage({ move: pickAiMoveShogi(task.input.board, task.input.hand, task.input.side, task.input.budgetMs ?? 800) }); break
     case 'junqi': self.postMessage({ move: pickAiMoveJunqi(task.input.board, task.input.side, task.input.budgetMs ?? 800) }); break
     case 'go': self.postMessage({ move: pickAiMoveGo(task.input.position, task.input.side, task.input.budgetMs ?? 650) }); break

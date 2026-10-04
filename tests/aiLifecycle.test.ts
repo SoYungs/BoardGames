@@ -2,10 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { scheduleAiMove } from '../src/workers/scheduleAiMove.ts'
 import { emptyBoard } from '../src/games/gomoku/gomokuLogic.ts'
+import { createInitialBoard } from '../src/games/xiangqi/xiangqiBoard.ts'
+import type { Move as XiangqiMove } from '../src/games/xiangqi/xiangqiTypes.ts'
+import type { XiangqiAnalysis } from '../src/games/xiangqi/xiangqiAi.ts'
 
 class WorkerStub {
   static instances: WorkerStub[] = []
-  onmessage: ((event: { data: { move: [number, number] } }) => void) | null = null
+  onmessage: ((event: { data: { move: [number, number] | XiangqiMove; analysis?: XiangqiAnalysis } }) => void) | null = null
   onerror: ((event: { preventDefault: () => void }) => void) | null = null
   onmessageerror: (() => void) | null = null
   terminated = false
@@ -113,5 +116,27 @@ test('a worker failure reports an error without awarding a game result', () => {
     worker.onmessage?.({ data: { move: [7, 7] } })
     assert.equal(failed, true)
     assert.equal(worker.terminated, true)
+  })
+})
+
+test('xiangqi forwards the requested depth and completed analysis once, and cancelling discards both', () => {
+  withWorkerEnvironment((advance, pending) => {
+    const input = { board: createInitialBoard(), side: 'black' as const, budgetMs: 3000, maxDepth: 8 }
+    const move: XiangqiMove = { fromR: 0, fromC: 7, toR: 2, toC: 6 }
+    const analysis: XiangqiAnalysis = { depth: 5, nodes: 2000, elapsedMs: 3000, targetDepth: 8, timedOut: true }
+    const results: unknown[] = []
+    scheduleAiMove('xiangqi', input, (reply, stats) => results.push({ move: reply, analysis: stats }))
+    advance()
+    const worker = WorkerStub.instances[0]
+    assert.deepEqual(worker.request, { game: 'xiangqi', input })
+    worker.onmessage?.({ data: { move, analysis } })
+    worker.onmessage?.({ data: { move, analysis } })
+    assert.deepEqual(results, [{ move, analysis }])
+    assert.equal(pending(), 0)
+    const cancel = scheduleAiMove('xiangqi', input, () => assert.fail('cancelled analysis reached the game'))
+    advance()
+    cancel()
+    WorkerStub.instances[1].onmessage?.({ data: { move, analysis } })
+    assert.equal(pending(), 0)
   })
 })

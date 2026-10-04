@@ -26,6 +26,15 @@
 .move-marker-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .move-marker-legend i { width: 8px; height: 8px; border-radius: 50%; background: #507d57bc; }
 .move-marker-legend .move-legend-capture { width: 12px; height: 12px; background: transparent; border: 2px solid #b1874c; }
+.xiangqi-ai-settings { margin: 0 0 15px; padding: 12px 14px; border: 1px solid #dfe4d4; border-radius: 10px; background: #f4f5eb; }
+.xiangqi-ai-depth { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: #496344; font-size: 12px; line-height: 1.6; }
+.xiangqi-ai-depth > span { flex-shrink: 0; }
+.xiangqi-ai-depth select { min-width: 0; max-width: 280px; min-height: 42px; padding: 8px 10px; border: 1px solid #cfd9c2; border-radius: 8px; background: #fbfcf5; color: #365338; font: inherit; flex: 1 1 210px; }
+.xiangqi-ai-depth select:focus-visible { outline: 2px solid #416c49; outline-offset: 2px; }
+.xiangqi-ai-depth select:disabled { opacity: .65; cursor: wait; }
+.xiangqi-ai-analysis { margin: 10px 0 0; color: #47633e; font-size: 12px; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.xiangqi-ai-depth-note { margin: 8px 0 0; color: #75836b; font-size: 11px; line-height: 1.8; }
+@media (max-width: 540px) { .xiangqi-ai-settings { padding: 10px 11px; }.xiangqi-ai-depth select { max-width: none; flex-basis: 100%; } }
 @keyframes moving-selection { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @keyframes moving-check { from { opacity: 0; translate: 0 -4px; } to { opacity: 1; translate: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .moving-game *, .moving-game *::before, .moving-game *::after { animation: none !important; transition: none !important; } }

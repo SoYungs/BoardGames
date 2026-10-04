@@ -17,6 +17,7 @@ import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { getUndoIndex } from '../undo'
 import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
+import type { XiangqiAnalysis } from './xiangqiAi'
 import type { Board, Move, Side } from './xiangqiTypes'
 import { pieceChar } from './xiangqiTypes'
 import {
@@ -46,6 +47,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const [lastMove, setLastMove] = useState<Move | null>(null)
   const [history, setHistory] = useState<XiangqiSnap[]>([])
   const [aiError, setAiError] = useState(false)
+  const [depth, setDepth] = useState<4 | 6 | 8>(8)
+  const [analysis, setAnalysis] = useState<XiangqiAnalysis | null>(null)
   const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
   const [boardEpoch, setBoardEpoch] = useState(0)
   const effectSequence = useRef(0)
@@ -87,6 +90,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     setLastMove(null)
     setHistory([])
     setAiError(false)
+    setAnalysis(null)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
   }, [])
@@ -104,6 +108,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     setWinner(prev.winner)
     setSelected(mode === 'local' ? prev.selected : null)
     setAiError(false)
+    setAnalysis(null)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
   }, [mode, history, humanSide])
@@ -146,8 +151,10 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   useEffect(() => {
     if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
     const cur = boardForAiRef.current
-    const cancel = scheduleAiMove('xiangqi', { board: cur, side: aiSide }, (m) => {
+    const budgetMs = depth === 4 ? 700 : depth === 6 ? 1600 : 3000
+    const cancel = scheduleAiMove('xiangqi', { board: cur, side: aiSide, maxDepth: depth, budgetMs }, (m, result) => {
       aiCancelRef.current = null
+      setAnalysis(result ?? null)
       if (!m) {
         setWinner(humanSide)
         return
@@ -182,7 +189,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       cancel()
       if (aiCancelRef.current === cancel) aiCancelRef.current = null
     }
-  }, [present, board, lastMove, winner, aiError, mode, turn, aiSide, humanSide])
+  }, [present, board, lastMove, winner, aiError, mode, turn, aiSide, humanSide, depth])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return
@@ -236,6 +243,20 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
           </button>
         </div>
       </div>
+      {mode === 'ai' && (
+        <div className="xiangqi-ai-settings">
+          <label className="xiangqi-ai-depth">
+            <span>电脑思考深度</span>
+            <select value={depth} onChange={event => setDepth(Number(event.target.value) as 4 | 6 | 8)} disabled={thinking} aria-label="电脑思考深度" aria-describedby="xiangqi-ai-depth-note">
+              <option value={4}>4 层 · 快速 · 最多 0.7 秒</option>
+              <option value={6}>6 层 · 进阶 · 最多 1.6 秒</option>
+              <option value={8}>8 层 · 高难度 · 最多 3 秒</option>
+            </select>
+          </label>
+          {analysis && <p className="xiangqi-ai-analysis" aria-live="polite">上一手完成 {analysis.depth} 层 · {(analysis.elapsedMs / 1000).toFixed(2)} 秒</p>}
+          <p id="xiangqi-ai-depth-note" className="xiangqi-ai-depth-note">每层代表一方走一步；目标层数受时间上限限制，实际完成深度以上一手结果为准。</p>
+        </div>
+      )}
       <GameResult result={winner ? status : null} onRestart={reset} />
       <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={selected ? 1 : 0} note={winner ? '本局结束。可悔棋继续练习，或重新开始。' : isCheck ? '正在被将军：先化解对将帅的威胁。' : mode === 'ai' ? '你执红方先手；绿点可走，金圈可吃。悔棋不限次数，每次回到你上一手行棋前。' : '绿点可走，金圈可吃；点击另一枚己方棋子可重新选择。'} />
       <ResponsiveBoard width={w + 22} height={h + 22}>
