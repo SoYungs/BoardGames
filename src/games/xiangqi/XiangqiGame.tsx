@@ -15,6 +15,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { getUndoIndex } from '../undo'
 import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
 import type { Board, Move, Side } from './xiangqiTypes'
 import { pieceChar } from './xiangqiTypes'
@@ -48,6 +49,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
   const [boardEpoch, setBoardEpoch] = useState(0)
   const effectSequence = useRef(0)
+  const aiCancelRef = useRef<(() => void) | null>(null)
   const reduceMotion = useReducedMotion()
 
   const boardForAiRef = useRef(board)
@@ -67,7 +69,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const isCheck = useMemo(() => !winner && inCheck(board, turn), [winner, board, turn])
 
   const status = useMemo(() => {
-    if (aiError) return '电脑计算遇到问题，请重新开始'
+    if (aiError) return '电脑计算遇到问题，可悔棋重试或重新开始'
     if (winner) return `${winner === 'red' ? '红方' : '黑方'} 胜`
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     const sideLabel = turn === 'red' ? '红方' : '黑方'
@@ -76,6 +78,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   }, [winner, mode, turn, aiSide, isCheck, aiError])
 
   const reset = useCallback(() => {
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
     setBoard(createInitialBoard())
     setTurn('red')
     setSelected(null)
@@ -88,32 +92,34 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   }, [])
 
   const undo = useCallback(() => {
-    if (mode !== 'local' || history.length === 0) return
-    const prev = history[history.length - 1]
-    setHistory((h) => h.slice(0, -1))
+    const index = getUndoIndex(history, mode, humanSide)
+    if (index < 0) return
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
+    const prev = history[index]
+    setHistory(history.slice(0, index))
     setBoard(snapshotBoard(prev.board))
     setTurn(prev.turn)
     setLastMove(prev.lastMove)
     setWinner(prev.winner)
-    setSelected(prev.selected)
+    setSelected(mode === 'local' ? prev.selected : null)
+    setAiError(false)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
-  }, [mode, history])
+  }, [mode, history, humanSide])
 
   const tryMove = useCallback(
     (m: Move) => {
-      if (mode === 'local') {
-        setHistory((h) => [
-          ...h,
-          {
-            board: snapshotBoard(board),
-            turn,
-            lastMove,
-            winner,
-            selected,
-          },
-        ])
-      }
+      setHistory((h) => [
+        ...h,
+        {
+          board: snapshotBoard(board),
+          turn,
+          lastMove,
+          winner,
+          selected,
+        },
+      ])
       const cap = board[m.toR][m.toC]
       const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: cap ? 'capture' : 'move' })
@@ -133,18 +139,23 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       }
       setTurn(nextTurn)
     },
-    [board, turn, mode, lastMove, winner, selected],
+    [board, turn, lastMove, winner, selected],
   )
 
   const present = useIsPresent()
   useEffect(() => {
     if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
     const cur = boardForAiRef.current
-    return scheduleAiMove('xiangqi', { board: cur, side: aiSide }, (m) => {
+    const cancel = scheduleAiMove('xiangqi', { board: cur, side: aiSide }, (m) => {
+      aiCancelRef.current = null
       if (!m) {
         setWinner(humanSide)
         return
       }
+      setHistory((h) => [
+        ...h,
+        { board: snapshotBoard(cur), turn: aiSide, lastMove, winner: null, selected: null },
+      ])
       const cap = cur[m.toR][m.toC]
       const next = applyMove(cur, m.fromR, m.fromC, m.toR, m.toC)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: cap ? 'capture' : 'move' })
@@ -162,8 +173,16 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       }
       setBoard(next)
       setTurn('red')
-    }, 140, () => setAiError(true))
-  }, [present, winner, aiError, mode, turn, aiSide, humanSide])
+    }, 140, () => {
+      aiCancelRef.current = null
+      setAiError(true)
+    })
+    aiCancelRef.current = cancel
+    return () => {
+      cancel()
+      if (aiCancelRef.current === cancel) aiCancelRef.current = null
+    }
+  }, [present, board, lastMove, winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return
@@ -189,8 +208,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
 
   const thinking = mode === 'ai' && turn === aiSide && !winner && !aiError
   const selectedPiece = selected ? board[selected[0]][selected[1]] : null
-  const detail = aiError ? '请点击重新开始，恢复对局' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
-    : winner ? '本局结束，可重新开始' : thinking ? '电脑正在思考，下一步很快就来' : '先选自己的棋子，再点击标记的落点'
+  const detail = aiError ? '可悔棋重新尝试这一手，或重新开始' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
+    : winner ? '本局结束，可悔棋继续练习或重新开始' : thinking ? '电脑正在思考，也可悔棋重新尝试' : '先选自己的棋子，再点击标记的落点'
 
   const w = PAD * 2 + CELL * (9 - 1)
   const h = PAD * 2 + CELL * (10 - 1)
@@ -209,18 +228,16 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       <div className="xiangqi-toolbar">
         <GameStatus status={status} thinking={thinking} sideLabel={turn === 'red' ? '红方' : '黑方'} sideTone={turn === 'red' ? 'red' : 'dark'} detail={detail} />
         <div className="xiangqi-actions">
-          {mode === 'local' && (
-            <button type="button" className="xiangqi-undo" onClick={undo} disabled={history.length === 0}>
-              悔棋
-            </button>
-          )}
+          <button type="button" className="xiangqi-undo" onClick={undo} disabled={getUndoIndex(history, mode, humanSide) < 0} title={mode === 'ai' ? '不限次数，撤回到你上一次行棋前' : '撤回上一手，可连续悔棋'}>
+            悔棋
+          </button>
           <button type="button" className="xiangqi-reset" onClick={reset}>
             重新开始
           </button>
         </div>
       </div>
       <GameResult result={winner ? status : null} onRestart={reset} />
-      <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={selected ? 1 : 0} note={winner ? '本局结束。可重新开始，或在双人模式悔棋复盘。' : isCheck ? '正在被将军：先化解对将帅的威胁。' : mode === 'ai' ? '你执红方先手；绿点可走，金圈可吃。' : '绿点可走，金圈可吃；点击另一枚己方棋子可重新选择。'} />
+      <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={selected ? 1 : 0} note={winner ? '本局结束。可悔棋继续练习，或重新开始。' : isCheck ? '正在被将军：先化解对将帅的威胁。' : mode === 'ai' ? '你执红方先手；绿点可走，金圈可吃。悔棋不限次数，每次回到你上一手行棋前。' : '绿点可走，金圈可吃；点击另一枚己方棋子可重新选择。'} />
       <ResponsiveBoard width={w + 22} height={h + 22}>
       <div
         className="xiangqi-board-outer"

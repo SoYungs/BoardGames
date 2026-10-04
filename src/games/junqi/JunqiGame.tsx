@@ -14,6 +14,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { getUndoIndex } from '../undo'
 import {
   applyMove,
   createInitialBoard,
@@ -53,6 +54,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
   const [boardEpoch, setBoardEpoch] = useState(0)
   const effectSequence = useRef(0)
+  const aiCancelRef = useRef<(() => void) | null>(null)
 
   const reduceMotion = useReducedMotion()
 
@@ -66,7 +68,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   }, [board, selected, turn])
 
   const status = useMemo(() => {
-    if (aiError) return '电脑计算遇到问题，请重新开始'
+    if (aiError) return '电脑计算遇到问题，可悔棋重试或重新开始'
     if (winner) return `${winner === 'red' ? '红方' : '蓝方'} 胜`
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     if (selected && targets.length === 0) return '该棋子不可移动 · 换一枚棋子'
@@ -74,6 +76,8 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   }, [winner, mode, turn, aiSide, selected, targets.length, aiError])
 
   const reset = useCallback(() => {
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
     setBoard(createInitialBoard())
     setTurn('red')
     setSelected(null)
@@ -86,23 +90,25 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   }, [])
 
   const undo = useCallback(() => {
-    if (mode !== 'local' || history.length === 0) return
-    const prev = history[history.length - 1]
-    setHistory((h) => h.slice(0, -1))
+    const index = getUndoIndex(history, mode, humanSide)
+    if (index < 0) return
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
+    const prev = history[index]
+    setHistory((h) => h.slice(0, index))
     setBoard(snapshotBoard(prev.board))
     setTurn(prev.turn)
     setLastMove(prev.lastMove)
     setWinner(prev.winner)
-    setSelected(prev.selected)
+    setSelected(mode === 'ai' ? null : prev.selected)
+    setAiError(false)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
-  }, [mode, history])
+  }, [mode, history, humanSide])
 
   const tryMove = useCallback(
     (m: Move) => {
-      if (mode === 'local') {
-        setHistory((h) => [...h, { board: snapshotBoard(board), turn, lastMove, winner, selected }])
-      }
+      setHistory((h) => [...h, { board: snapshotBoard(board), turn, lastMove, winner, selected }])
       const attacker = board[m.fromR][m.fromC]!
       const defender = board[m.toR][m.toC]
       let result: import('./junqiCombat').CombatResult = 'none'
@@ -117,20 +123,25 @@ export function JunqiGame({ mode }: { mode: Mode }) {
       setWinner(getWinnerJunqi(next, nextTurn))
       setTurn(nextTurn)
     },
-    [board, turn, mode, lastMove, winner, selected],
+    [board, turn, lastMove, winner, selected],
   )
 
   const present = useIsPresent()
   useEffect(() => {
     if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
-    return scheduleAiMove('junqi', { board, side: aiSide }, (m) => {
+    const cancel = scheduleAiMove('junqi', { board, side: aiSide }, (m) => {
       if (!m) {
         setWinner(humanSide)
         return
       }
       tryMove(m)
     }, 140, () => setAiError(true))
-  }, [present, winner, aiError, mode, turn, board, aiSide, humanSide, tryMove])
+    aiCancelRef.current = cancel
+    return () => {
+      cancel()
+      if (aiCancelRef.current === cancel) aiCancelRef.current = null
+    }
+  }, [present, winner, aiError, mode, turn, board, aiSide, humanSide, tryMove, boardEpoch])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return
@@ -167,8 +178,8 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   const thinking = mode === 'ai' && turn === aiSide && !winner && !aiError
   const displaySide = winner ?? turn
   const selectedPiece = selected ? board[selected[0]][selected[1]] : null
-  const detail = aiError ? '请点击重新开始，恢复对局' : selectedPiece && selected ? `已选${displayLabel(selectedPiece, selected[0], selected[1])} · ${targets.length ? `${targets.length} 个落点可走` : '不可移动，请换一枚棋子'}`
-    : winner ? '本局结束，可重新开始' : thinking ? '电脑正在思考，对方暗子仍保持隐藏' : '先选己方棋子，再查看可走或可交战的落点'
+  const detail = aiError ? '可悔棋重试，或重新开始' : selectedPiece && selected ? `已选${displayLabel(selectedPiece, selected[0], selected[1])} · ${targets.length ? `${targets.length} 个落点可走` : '不可移动，请换一枚棋子'}`
+    : winner ? '本局结束，可悔棋练习或重新开始' : thinking ? '电脑正在思考，也可悔棋调整上一步' : '先选己方棋子，再查看可走或可交战的落点'
 
   const w = PAD * 2 + CELL_W * COLS
   const h = PAD * 2 + CELL_H * ROWS
@@ -177,7 +188,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
     <div className="junqi-wrap moving-game">
       <JunqiToolbar status={status} thinking={thinking} sideLabel={displaySide === 'red' ? '红方' : '蓝方'} sideTone={displaySide === 'red' ? 'red' : 'blue'} detail={detail} mode={mode} undo={undo} historyLen={history.length} reset={reset} />
       <GameResult result={winner ? status : null} onRestart={reset} />
-      <InteractionHint steps={['选己方子', '查看落点', '移动或交战']} activeStep={selected ? 1 : 0} note={winner ? '本局结束。可重新开始，或在双人模式悔棋复盘。' : mode === 'ai' ? '你执红方；绿点可走，金圈可交战。对手暗子交战后才亮明。' : '轮到你时，选中己方暗子可看番号；绿点可走，金圈可交战。'} />
+      <InteractionHint steps={['选己方子', '查看落点', '移动或交战']} activeStep={selected ? 1 : 0} note={winner ? '本局结束。可不限次数悔棋复盘，或重新开始。' : mode === 'ai' ? '你执红方；绿点可走，金圈可交战。对手暗子交战后才亮明。悔棋不限次数，每次回到你上一手行棋前。' : '轮到你时，选中己方暗子可看番号；绿点可走，金圈可交战。'} />
       <ResponsiveBoard width={w + 22} height={h + 22}>
         <div
           className="junqi-board-outer"
@@ -329,11 +340,9 @@ function JunqiToolbar(props: {
     <div className="junqi-toolbar">
       <GameStatus status={status} thinking={thinking} sideLabel={sideLabel} sideTone={sideTone} detail={detail} />
       <div className="junqi-actions">
-        {mode === 'local' && (
-          <button type="button" className="junqi-undo" onClick={undo} disabled={historyLen === 0}>
-            悔棋
-          </button>
-        )}
+        <button type="button" className="junqi-undo" onClick={undo} disabled={historyLen === 0} title={mode === 'ai' ? '不限次数，撤回到你上次行棋前' : '不限次数，撤回上一步'}>
+          悔棋
+        </button>
         <button type="button" className="junqi-reset" onClick={reset}>
           重开
         </button>

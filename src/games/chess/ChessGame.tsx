@@ -16,6 +16,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { getUndoIndex } from '../undo'
 import { applyMove, createInitialBoard, initialMeta, snapshotBoard, snapshotMeta } from './chessBoard'
 import type { Board, GameMeta, Move, Side } from './chessTypes'
 import { PIECE_NAMES, PROMOTION_PIECES } from './chessTypes'
@@ -53,6 +54,7 @@ export function ChessGame({ mode }: { mode: Mode }) {
   const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
   const [boardEpoch, setBoardEpoch] = useState(0)
   const effectSequence = useRef(0)
+  const aiCancelRef = useRef<(() => void) | null>(null)
   const gameRef = useRef<HTMLDivElement>(null)
   const cellRefs = useRef<(HTMLButtonElement | null)[]>([])
   const promotionFocus = useRef<[number, number] | null>(null)
@@ -84,7 +86,7 @@ export function ChessGame({ mode }: { mode: Mode }) {
   const isCheck = useMemo(() => !winner && inCheck(board, turn), [winner, board, turn])
 
   const status = useMemo(() => {
-    if (aiError) return '电脑计算遇到问题，请重新开始'
+    if (aiError) return '电脑计算遇到问题，可悔棋重试或重新开始'
     if (winner === 'draw') return '和棋（逼和）'
     if (winner) return `${winner === 'white' ? '白方' : '黑方'} 胜`
     if (pendingPromotion) return '请选择兵的升变棋子'
@@ -95,6 +97,8 @@ export function ChessGame({ mode }: { mode: Mode }) {
   }, [winner, mode, turn, aiSide, isCheck, pendingPromotion, aiError])
 
   const reset = useCallback(() => {
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
     promotionFocus.current = null
     setBoard(createInitialBoard())
     setMeta(initialMeta())
@@ -110,29 +114,40 @@ export function ChessGame({ mode }: { mode: Mode }) {
   }, [])
 
   const undo = useCallback(() => {
-    if (mode !== 'local' || history.length === 0) return
+    if (pendingPromotion) {
+      promotionFocus.current = [pendingPromotion.fromR, pendingPromotion.fromC]
+      setPendingPromotion(null)
+      setSelected(null)
+      setAiError(false)
+      setMoveEffect(null)
+      setBoardEpoch(epoch => epoch + 1)
+      return
+    }
+    const index = getUndoIndex(history, mode, humanSide)
+    if (index < 0) return
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
     promotionFocus.current = null
-    const prev = history[history.length - 1]
-    setHistory((h) => h.slice(0, -1))
+    const prev = history[index]
+    setHistory(history.slice(0, index))
     setBoard(snapshotBoard(prev.board))
     setMeta(snapshotMeta(prev.meta))
     setTurn(prev.turn)
     setLastMove(prev.lastMove)
     setWinner(prev.winner)
-    setSelected(prev.selected)
+    setSelected(mode === 'local' ? prev.selected : null)
     setPendingPromotion(null)
+    setAiError(false)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
-  }, [mode, history])
+  }, [mode, history, humanSide, pendingPromotion])
 
   const tryMove = useCallback(
     (m: Move) => {
-      if (mode === 'local') {
-        setHistory((h) => [
-          ...h,
-          { board: snapshotBoard(board), meta: snapshotMeta(meta), turn, lastMove, winner, selected },
-        ])
-      }
+      setHistory((h) => [
+        ...h,
+        { board: snapshotBoard(board), meta: snapshotMeta(meta), turn, lastMove, winner, selected },
+      ])
       const { board: next, meta: nextMeta } = applyMove(board, meta, m)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: next.flat().filter(Boolean).length < board.flat().filter(Boolean).length ? 'capture' : 'move' })
       setLastMove(m)
@@ -152,18 +167,23 @@ export function ChessGame({ mode }: { mode: Mode }) {
       }
       setTurn(opp)
     },
-    [board, meta, turn, mode, lastMove, winner, selected],
+    [board, meta, turn, lastMove, winner, selected],
   )
 
   const present = useIsPresent()
   useEffect(() => {
     if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
     const { board: cur, meta: curMeta } = stateForAiRef.current
-    return scheduleAiMove('chess', { board: cur, meta: curMeta, side: aiSide }, (m) => {
+    const cancel = scheduleAiMove('chess', { board: cur, meta: curMeta, side: aiSide }, (m) => {
+      aiCancelRef.current = null
       if (!m) {
         setWinner(inCheck(cur, aiSide) ? humanSide : 'draw')
         return
       }
+      setHistory((h) => [
+        ...h,
+        { board: snapshotBoard(cur), meta: snapshotMeta(curMeta), turn: aiSide, lastMove, winner: null, selected: null },
+      ])
       const { board: next, meta: nextMeta } = applyMove(cur, curMeta, m)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: next.flat().filter(Boolean).length < cur.flat().filter(Boolean).length ? 'capture' : 'move' })
       setLastMove(m)
@@ -179,8 +199,16 @@ export function ChessGame({ mode }: { mode: Mode }) {
         return
       }
       setTurn('white')
-    }, 140, () => setAiError(true))
-  }, [present, winner, aiError, mode, turn, aiSide, humanSide])
+    }, 140, () => {
+      aiCancelRef.current = null
+      setAiError(true)
+    })
+    aiCancelRef.current = cancel
+    return () => {
+      cancel()
+      if (aiCancelRef.current === cancel) aiCancelRef.current = null
+    }
+  }, [present, board, meta, lastMove, winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {
     if (winner || pendingPromotion) return
@@ -220,9 +248,9 @@ export function ChessGame({ mode }: { mode: Mode }) {
   const thinking = mode === 'ai' && turn === aiSide && !winner && !aiError
   const selectedPiece = selected ? board[selected[0]][selected[1]] : null
   const targetCount = new Set(targets.map(move => `${move.toR},${move.toC}`)).size
-  const detail = aiError ? '请点击重新开始，恢复对局' : pendingPromotion ? '选择新的棋子，确认后兵会走到该格'
+  const detail = aiError ? '可悔棋重新尝试这一手，或重新开始' : pendingPromotion ? '选择新的棋子，确认后兵会走到该格'
     : selectedPiece ? `已选${PIECE_NAMES[selectedPiece.type]} · ${targetCount ? `${targetCount} 个落点可走` : '暂无合法走法，换一枚棋子'}`
-      : winner ? '本局结束，可重新开始' : thinking ? '正在寻找下一步，你可以先观察棋盘' : '先选自己的棋子，再点击标记的落点'
+      : winner ? '本局结束，可悔棋继续练习或重新开始' : thinking ? '正在寻找下一步，也可悔棋重新尝试' : '先选自己的棋子，再点击标记的落点'
 
   const w = PAD * 2 + CELL * 8
   const h = PAD * 2 + CELL * 8
@@ -232,18 +260,16 @@ export function ChessGame({ mode }: { mode: Mode }) {
       <div className="chess-toolbar">
         <GameStatus status={status} thinking={thinking} sideLabel={turn === 'white' ? '白方' : '黑方'} sideTone={turn === 'white' ? 'light' : 'dark'} detail={detail} />
         <div className="chess-actions">
-          {mode === 'local' && (
-            <button type="button" className="chess-undo" onClick={undo} disabled={history.length === 0}>
-              悔棋
-            </button>
-          )}
+          <button type="button" className="chess-undo" onClick={undo} disabled={!pendingPromotion && getUndoIndex(history, mode, humanSide) < 0} title={pendingPromotion ? '取消本次尚未落子的升变选择' : mode === 'ai' ? '不限次数，撤回到你上一次行棋前' : '撤回上一手，可连续悔棋'}>
+            悔棋
+          </button>
           <button type="button" className="chess-reset" onClick={reset}>
             重新开始
           </button>
         </div>
       </div>
       <GameResult result={winner ? status : null} onRestart={reset} />
-      <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={pendingPromotion ? 2 : selected ? 1 : 0} note={winner ? '本局结束。可重新开始，或在双人模式悔棋复盘。' : isCheck ? '正在被将军：先保护你的王。' : mode === 'ai' ? '你执白方先手；棋盘上的绿点可走，金圈可吃。' : '绿点可走，金圈可吃；双方轮流操作。'} />
+      <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={pendingPromotion ? 2 : selected ? 1 : 0} note={winner ? '本局结束。可悔棋继续练习，或重新开始。' : isCheck ? '正在被将军：先保护你的王。' : mode === 'ai' ? '你执白方先手；绿点可走，金圈可吃。悔棋不限次数，每次回到你上一手行棋前。' : '绿点可走，金圈可吃；双方轮流操作。'} />
       {pendingPromotion && (
         <div
           className="chess-promotion"

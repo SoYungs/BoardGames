@@ -1,6 +1,6 @@
 import type { AiTasks } from './aiTypes'
 
-/** 每次思考独立执行；重开、换模式或离开页面时取消定时器并终止计算。 */
+/** 每次思考独立执行；悔棋、重开、换模式或离开页面时取消定时器并终止计算。 */
 export function scheduleAiMove<G extends keyof AiTasks>(game: G, input: AiTasks[G]['input'], apply: (move: AiTasks[G]['move'] | null) => void, delay = 320, onFailure?: () => void): () => void {
   let worker: Worker | null = null
   let cancelled = false

@@ -2,10 +2,11 @@ import { GameResult } from '../../components/GameResult'
 import { GameStatus } from '../../components/GameStatus'
 import { InteractionHint } from '../../components/InteractionHint'
 import { BoardEffects } from '../../components/BoardEffects'
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { motion, AnimatePresence, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { getUndoIndex } from '../undo'
 import { GOMOKU_SIZE, type Cell, emptyBoard, checkWin, isBoardFull } from './gomokuLogic'
 import '../../styles/stone-games.css'
 
@@ -27,30 +28,40 @@ function placeStone(state: State, r: number, c: number): State {
 export function GomokuGame({ mode }: { mode: Mode }) {
   const [state, setState] = useState(() => initialState())
   const [aiError, setAiError] = useState(false)
+  const aiCancelRef = useRef<(() => void) | null>(null)
   const reduced = useReducedMotion()
   const { board, turn, winner, lastMove, history, effect, epoch } = state
   const thinking = mode === 'ai' && turn === 2 && !winner && !aiError
+  const undoIndex = getUndoIndex(history, mode, 1)
   const present = useIsPresent()
   useEffect(() => {
-    if (!present || mode !== 'ai' || winner || turn !== 2) return
-    return scheduleAiMove('gomoku', { board, side: 2 }, move => {
+    if (!present || aiError || mode !== 'ai' || winner || turn !== 2) return
+    const cancel = scheduleAiMove('gomoku', { board, side: 2 }, move => {
       if (move) setState(current => current.turn === 2 && current.board === board ? placeStone(current, ...move) : current)
     }, 140, () => setAiError(true))
-  }, [present, board, mode, turn, winner])
+    aiCancelRef.current = cancel
+    return cancel
+  }, [present, aiError, board, mode, turn, winner])
 
-  const status = aiError ? '电脑计算遇到问题，请重新开始' : winner === 'draw' ? '满盘和棋' : winner ? `${winner === 1 ? '黑棋' : '白棋'} 获胜` : mode === 'ai' && turn === 2 ? '电脑思考中…' : `${turn === 1 ? '黑棋' : '白棋'} 落子`
-  const reset = () => { setAiError(false); setState(current => initialState(current.epoch + 1)) }
-  const undo = () => setState(current => {
-    if (mode !== 'local' || !current.history.length) return current
-    return { ...current.history[current.history.length - 1], history: current.history.slice(0, -1), effect: null, epoch: current.epoch + 1 }
-  })
+  const status = aiError ? '电脑计算遇到问题，可悔棋重试或重新开始' : winner === 'draw' ? '满盘和棋' : winner ? `${winner === 1 ? '黑棋' : '白棋'} 获胜` : mode === 'ai' && turn === 2 ? '电脑思考中…' : `${turn === 1 ? '黑棋' : '白棋'} 落子`
+  const reset = () => { aiCancelRef.current?.(); setAiError(false); setState(current => initialState(current.epoch + 1)) }
+  const undo = () => {
+    if (undoIndex < 0) return
+    aiCancelRef.current?.()
+    setAiError(false)
+    setState(current => {
+      const index = getUndoIndex(current.history, mode, 1)
+      if (index < 0) return current
+      return { ...current.history[index], history: current.history.slice(0, index), effect: null, epoch: current.epoch + 1 }
+    })
+  }
 
   return (
     <div className="gomoku-wrap">
-      <div className="gomoku-toolbar"><GameStatus status={status} thinking={thinking} sideTone={(winner === 1 || winner === 2 ? winner : turn) === 1 ? 'dark' : 'light'} sideLabel={winner ? '对局结果' : mode === 'ai' ? turn === 1 ? '你的回合' : '电脑回合' : '当前回合'} detail={mode === 'ai' ? '你执黑棋先手，电脑执白棋' : '黑棋先手，两人轮流落子'} /><div className="gomoku-actions">{mode === 'local' && <button type="button" className="gomoku-undo" onClick={undo} disabled={!history.length}>悔棋</button>}<button type="button" className="gomoku-reset" onClick={reset}>重开</button></div></div>
+      <div className="gomoku-toolbar"><GameStatus status={status} thinking={thinking} sideTone={(winner === 1 || winner === 2 ? winner : turn) === 1 ? 'dark' : 'light'} sideLabel={winner ? '对局结果' : mode === 'ai' ? turn === 1 ? '你的回合' : '电脑回合' : '当前回合'} detail={mode === 'ai' ? '你执黑棋先手，电脑执白棋' : '黑棋先手，两人轮流落子'} /><div className="gomoku-actions"><button type="button" className="gomoku-undo" onClick={undo} disabled={undoIndex < 0} title={mode === 'ai' ? '不限次数，撤回到你上次行棋前；电脑思考时也可用' : '撤回上一手'}>悔棋</button><button type="button" className="gomoku-reset" onClick={reset}>重开</button></div></div>
       <GameResult result={winner ? status : null} onRestart={reset} />
       <p className="gomoku-hint">15 × 15 棋盘<span className="move-count">第 {history.length + (winner ? 0 : 1)} 手</span></p>
-      <InteractionHint steps={['找空点', '点击落子', '连成五子']} activeStep={winner ? 2 : thinking ? 1 : 0} note={thinking ? '电脑正在落子，稍等片刻。' : '横、竖或斜线，五颗同色棋子连在一起就赢。'} />
+      <InteractionHint steps={['找空点', '点击落子', '连成五子']} activeStep={winner ? 2 : thinking ? 1 : 0} note={(thinking ? '电脑正在落子，稍等片刻。' : '横、竖或斜线，五颗同色棋子连在一起就赢。') + (mode === 'ai' ? '悔棋不限次数，每次回到你上一手行棋前。' : '')} />
       <ResponsiveBoard width={510} height={510}>
         <div key={epoch} className="gomoku-board" style={{ '--cell': '32px', '--size': GOMOKU_SIZE } as CSSProperties} role="group" aria-label="五子棋棋盘">
           {board.map((row, r) => row.map((cell, c) => <button key={`${r}-${c}`} type="button" className={`gomoku-cell ${lastMove?.r === r && lastMove.c === c ? 'last-move' : ''}`} aria-label={`${r + 1} 行 ${c + 1} 列，${cell ? cell === 1 ? '黑棋' : '白棋' : '空位'}`} disabled={cell !== 0 || !!winner || (mode === 'ai' && turn === 2)} onClick={() => setState(current => (mode === 'ai' && current.turn === 2) ? current : placeStone(current, r, c))}>

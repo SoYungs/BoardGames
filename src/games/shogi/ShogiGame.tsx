@@ -15,6 +15,7 @@ import {
 import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { getUndoIndex } from '../undo'
 import { applyShogiMove, createInitialBoard, emptyHand, snapshotBoard, snapshotHand } from './shogiBoard'
 import type { Board, Hand, Move, PieceType, Side } from './shogiTypes'
 import { COLS, ROWS, pieceChar } from './shogiTypes'
@@ -53,6 +54,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
   const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
   const [boardEpoch, setBoardEpoch] = useState(0)
   const effectSequence = useRef(0)
+  const aiCancelRef = useRef<(() => void) | null>(null)
   const gameRef = useRef<HTMLDivElement>(null)
   const cellRefs = useRef<(HTMLButtonElement | null)[]>([])
   const promotionFocus = useRef<[number, number] | null>(null)
@@ -90,7 +92,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
 
   const status = useMemo(() => {
     if (winner) return `${winner === 'sente' ? '先手' : '后手'} 胜`
-    if (aiError) return '电脑计算遇到问题，请重新开始'
+    if (aiError) return '电脑计算遇到问题，可悔棋重试或重新开始'
     if (promotionChoices) return '请选择升变或不升，完成这一步'
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     const sideLabel = turn === 'sente' ? '先手' : '后手'
@@ -99,6 +101,8 @@ export function ShogiGame({ mode }: { mode: Mode }) {
   }, [winner, aiError, mode, turn, aiSide, checkState.showCheckOverlay, promotionChoices])
 
   const reset = useCallback(() => {
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
     promotionFocus.current = null
     setBoard(createInitialBoard())
     setHand(emptyHand())
@@ -115,21 +119,32 @@ export function ShogiGame({ mode }: { mode: Mode }) {
   }, [])
 
   const undo = useCallback(() => {
-    if (mode !== 'local' || history.length === 0) return
+    if (promotionChoices) {
+      promotionFocus.current = selected
+      setPromotionChoices(null)
+      setSelected(null)
+      setSelectedDrop(null)
+      return
+    }
+    const index = getUndoIndex(history, mode, humanSide)
+    if (index < 0) return
+    aiCancelRef.current?.()
+    aiCancelRef.current = null
     promotionFocus.current = null
-    const prev = history[history.length - 1]
-    setHistory((h) => h.slice(0, -1))
+    const prev = history[index]
+    setHistory((h) => h.slice(0, index))
     setBoard(snapshotBoard(prev.board))
     setHand(snapshotHand(prev.hand))
     setTurn(prev.turn)
     setLastMove(prev.lastMove)
     setWinner(prev.winner)
-    setSelected(prev.selected)
-    setSelectedDrop(prev.selectedDrop)
+    setSelected(mode === 'ai' ? null : prev.selected)
+    setSelectedDrop(mode === 'ai' ? null : prev.selectedDrop)
     setPromotionChoices(null)
+    setAiError(false)
     setMoveEffect(null)
     setBoardEpoch(epoch => epoch + 1)
-  }, [mode, history])
+  }, [mode, history, humanSide, promotionChoices, selected])
 
   const tryMove = useCallback(
     (m: Move) => {
@@ -144,20 +159,18 @@ export function ShogiGame({ mode }: { mode: Mode }) {
       )
       if (!ok) return
 
-      if (mode === 'local') {
-        setHistory((h) => [
-          ...h,
-          {
-            board: snapshotBoard(board),
-            hand: snapshotHand(hand),
-            turn,
-            lastMove,
-            winner,
-            selected,
-            selectedDrop,
-          },
-        ])
-      }
+      setHistory((h) => [
+        ...h,
+        {
+          board: snapshotBoard(board),
+          hand: snapshotHand(hand),
+          turn,
+          lastMove,
+          winner,
+          selected,
+          selectedDrop,
+        },
+      ])
       const { board: next, hand: nextHand } = applyShogiMove(board, hand, m, turn)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: board[m.toR][m.toC] ? 'capture' : m.dropType ? 'place' : 'move' })
       setLastMove(m)
@@ -178,17 +191,20 @@ export function ShogiGame({ mode }: { mode: Mode }) {
       }
       setTurn(opp)
     },
-    [board, hand, turn, mode, lastMove, winner, selected, selectedDrop, targets],
+    [board, hand, turn, lastMove, winner, selected, selectedDrop, targets],
   )
 
   const present = useIsPresent()
   useEffect(() => {
-    if (!present || winner || mode !== 'ai' || turn !== aiSide) return
-    return scheduleAiMove('shogi', { board, hand, side: aiSide }, (m: Move | null) => {
+    if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
+    const cancel = scheduleAiMove('shogi', { board, hand, side: aiSide }, (m: Move | null) => {
       if (!m) {
         setWinner(humanSide)
         return
       }
+      setHistory((h) => [...h, {
+        board: snapshotBoard(board), hand: snapshotHand(hand), turn, lastMove, winner, selected, selectedDrop,
+      }])
       const { board: next, hand: nextHand } = applyShogiMove(board, hand, m, aiSide)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: board[m.toR][m.toC] ? 'capture' : m.dropType ? 'place' : 'move' })
       setLastMove(m)
@@ -205,7 +221,12 @@ export function ShogiGame({ mode }: { mode: Mode }) {
       }
       setTurn('sente')
     }, 140, () => setAiError(true))
-  }, [present, winner, mode, turn, aiSide, humanSide, board, hand])
+    aiCancelRef.current = cancel
+    return () => {
+      cancel()
+      if (aiCancelRef.current === cancel) aiCancelRef.current = null
+    }
+  }, [present, winner, aiError, mode, turn, aiSide, humanSide, board, hand, lastMove, selected, selectedDrop, boardEpoch])
 
   const onCellClick = (r: number, c: number) => {
     if (winner || promotionChoices) return
@@ -253,9 +274,9 @@ export function ShogiGame({ mode }: { mode: Mode }) {
   const thinking = mode === 'ai' && turn === aiSide && !winner && !aiError
   const selectedPiece = selected ? board[selected[0]][selected[1]] : null
   const chosenLabel = selectedDrop ? pieceChar({ id: '', side: turn, type: selectedDrop, promoted: false }) : selectedPiece ? pieceChar(selectedPiece) : null
-  const detail = aiError ? '请点击重新开始，恢复对局' : promotionChoices ? '选择是否升变，完成这一步'
+  const detail = aiError ? '可悔棋重试，或重新开始' : promotionChoices ? '选择是否升变，完成这一步'
     : chosenLabel ? `${selectedDrop ? '准备打入' : '已选'}${chosenLabel} · ${targetSet.size ? `${targetSet.size} 个落点可走` : '暂无合法落点，请重新选择'}`
-      : winner ? '本局结束，可重新开始' : thinking ? '电脑正在思考，下一步很快就来' : '先选棋子，或从持子栏选择打入的棋子'
+      : winner ? '本局结束，可悔棋练习或重新开始' : thinking ? '电脑正在思考，也可悔棋调整上一步' : '先选棋子，或从持子栏选择打入的棋子'
 
   const w = PAD * 2 + CELL * (COLS - 1)
   const h = PAD * 2 + CELL * (ROWS - 1)
@@ -292,18 +313,16 @@ export function ShogiGame({ mode }: { mode: Mode }) {
       <div className="shogi-toolbar">
         <GameStatus status={status} thinking={thinking} sideLabel={turn === 'sente' ? '先手' : '后手'} sideTone={turn === 'sente' ? 'dark' : 'red'} detail={detail} />
         <div className="shogi-actions">
-          {mode === 'local' && (
-            <button type="button" className="shogi-undo" onClick={undo} disabled={history.length === 0}>
-              悔棋
-            </button>
-          )}
+          <button type="button" className="shogi-undo" onClick={undo} disabled={history.length === 0 && !promotionChoices} title={mode === 'ai' ? '不限次数，撤回到你上次行棋前；未完成升变时取消当前选择' : '不限次数，撤回上一步；未完成升变时取消当前选择'}>
+            悔棋
+          </button>
           <button type="button" className="shogi-reset" onClick={reset}>
             重新开始
           </button>
         </div>
       </div>
       <GameResult result={winner ? status : null} onRestart={reset} />
-      <InteractionHint steps={['选棋子或持子', '查看落点', '走子或打入']} activeStep={promotionChoices ? 2 : selected || selectedDrop ? 1 : 0} note={winner ? '本局结束。可重新开始，或在双人模式悔棋复盘。' : checkState.showCheckOverlay ? '正在被王手：先保护你的玉。' : selectedDrop ? '绿点是这枚持子可以打入的空位；再点持子可取消。' : '绿点可走，金圈可吃；吃下的棋子会进入持子栏。'} />
+      <InteractionHint steps={['选棋子或持子', '查看落点', '走子或打入']} activeStep={promotionChoices ? 2 : selected || selectedDrop ? 1 : 0} note={`${winner ? '本局结束。可不限次数悔棋复盘，或重新开始。' : checkState.showCheckOverlay ? '正在被王手：先保护你的玉。' : selectedDrop ? '绿点是这枚持子可以打入的空位；再点持子可取消。' : '绿点可走，金圈可吃；吃下的棋子会进入持子栏。'}${mode === 'ai' && !winner ? ' 悔棋不限次数，每次回到你上一手行棋前。' : ''}`} />
       {promotionChoices && (
         <div className="shogi-promotion" role="group" aria-label="选择是否升变" onKeyDown={(event) => {
           if (event.key === 'Escape') {

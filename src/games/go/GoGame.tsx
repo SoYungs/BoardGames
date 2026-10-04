@@ -6,6 +6,7 @@ import { InteractionHint } from '../../components/InteractionHint'
 import { BoardEffects } from '../../components/BoardEffects'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
+import { getUndoIndex } from '../undo'
 import { createGoPosition, getGoGroup, goPointKey, playGoMove } from './goLogic'
 import { GO_SIZE, goSideName, otherGoSide } from './goTypes'
 import type { GoMove, GoMoveError, GoPoint, GoPosition, GoSide } from './goTypes'
@@ -20,7 +21,7 @@ const PAD = 30
 const BOARD_WIDTH = PAD * 2 + CELL * (GO_SIZE - 1)
 const COLUMNS = 'ABCDEFGHJ'
 const ERROR_TEXT: Record<GoMoveError, string> = {
-  finished: '对局已经结束，可以重开或在双人模式悔棋。', outside: '请在棋盘交叉点落子。',
+  finished: '对局已经结束，可以重开或悔棋继续练习。', outside: '请在棋盘交叉点落子。',
   occupied: '这里已有棋子，请选择空交叉点。', suicide: '这里会让新棋子没气，请换个空点。',
   ko: '这里不能马上提回来，请先在别处落子或停一手。',
 }
@@ -32,15 +33,17 @@ export function GoGame({ mode }: { mode: Mode }) {
   const [selected, setSelected] = useState<GoPoint | null>(null)
   const [focusIndex, setFocusIndex] = useState(40)
   const cells = useRef<(HTMLButtonElement | null)[]>([])
+  const aiCancelRef = useRef<(() => void) | null>(null)
   const reduceMotion = useReducedMotion()
   const { position, history, captured, effect, effectKey, epoch } = state
   const { board, turn, result, lastMove, consecutivePasses } = position
   const thinking = mode === 'ai' && turn === 2 && !result && !aiError
+  const undoIndex = getUndoIndex(history, mode, 1)
 
   const present = useIsPresent()
   useEffect(() => {
-    if (!present || mode !== 'ai' || position.result || position.turn !== 2) return
-    return scheduleAiMove('go', { position, side: 2, budgetMs: 650 }, (move: GoMove | null) => {
+    if (!present || aiError || mode !== 'ai' || position.result || position.turn !== 2) return
+    const cancel = scheduleAiMove('go', { position, side: 2, budgetMs: 650 }, (move: GoMove | null) => {
       const played = playGoMove(position, move ?? { type: 'pass' })
       if (!played.ok) {
         setAiError(true)
@@ -52,7 +55,9 @@ export function GoGame({ mode }: { mode: Mode }) {
       setSelected(null)
       setFeedback(null)
     }, 140, () => setAiError(true))
-  }, [present, mode, position])
+    aiCancelRef.current = cancel
+    return cancel
+  }, [present, aiError, mode, position])
 
   const selectedGroup = useMemo(() => selected ? getGoGroup(board, selected.r, selected.c) : null, [board, selected])
   const groupSet = useMemo(() => new Set(selectedGroup?.stones.map(goPointKey) ?? []), [selectedGroup])
@@ -62,11 +67,12 @@ export function GoGame({ mode }: { mode: Mode }) {
       ? `${goSideName(otherGoSide(result.winner))}认输 · ${goSideName(result.winner)}胜`
       : `${goSideName(result.winner)}胜 ${result.margin} 目`
     : null
-  const status = resultLabel ?? (aiError ? '电脑计算遇到问题，请重新开始'
+  const status = resultLabel ?? (aiError ? '电脑计算遇到问题，可悔棋重试或重新开始'
     : thinking ? '电脑思考中…'
       : `${goSideName(turn)}行棋${consecutivePasses ? ' · 对方已停一手' : ''}${captured.length ? ` · 上一步提走 ${captured.length} 子` : ''}`)
 
   function reset() {
+    aiCancelRef.current?.()
     setState(current => initialState(current.epoch + 1))
     setAiError(false)
     setSelected(null)
@@ -98,8 +104,14 @@ export function GoGame({ mode }: { mode: Mode }) {
   }
 
   function undo() {
-    if (mode !== 'local' || history.length === 0) return
-    setState({ position: history[history.length - 1], history: history.slice(0, -1), captured: [], effect: null, effectKey: effectKey + 1, epoch: epoch + 1 })
+    if (undoIndex < 0) return
+    aiCancelRef.current?.()
+    setState(current => {
+      const index = getUndoIndex(current.history, mode, 1)
+      if (index < 0) return current
+      return { position: current.history[index], history: current.history.slice(0, index), captured: [], effect: null, effectKey: current.effectKey + 1, epoch: current.epoch + 1 }
+    })
+    setAiError(false)
     setSelected(null)
     setFeedback(null)
   }
@@ -132,13 +144,13 @@ export function GoGame({ mode }: { mode: Mode }) {
       <div className="go-toolbar">
         <GameStatus status={feedback?.text ?? status} thinking={thinking} sideTone={(result?.winner ?? selectedGroup?.side ?? turn) === 1 ? 'dark' : 'light'} sideLabel={result ? '对局结果' : selectedGroup ? '棋块信息' : mode === 'ai' ? turn === 1 ? '你的回合' : '电脑回合' : '当前回合'} detail={selectedGroup ? `深绿框是这一块棋 · 绿点是它的 ${selectedGroup.liberties.length} 口气` : '点空交叉点落子，点已有棋子查看它的气'} />
         <div className="go-actions">
-          {mode === 'local' && <button type="button" onClick={undo} disabled={!history.length}>悔棋</button>}
+          <button type="button" onClick={undo} disabled={undoIndex < 0} title={mode === 'ai' ? '不限次数，撤回到你上次行棋前；电脑思考时也可用' : '撤回上一手'}>悔棋</button>
           <button type="button" onClick={reset}>重新开始</button>
         </div>
       </div>
       <GameResult result={resultLabel} onRestart={reset} />
       <div className="go-players">{renderPlayer(1)}{renderPlayer(2)}</div>
-      <InteractionHint steps={['空点落子', '点子看气', '停手计分']} activeStep={result ? 2 : selectedGroup ? 1 : 0} note={selectedGroup ? '气就是相邻的空点。深绿框围住同一块棋，绿点标出它的气。' : '棋子的气被围尽就会被提走。先实际提走死子，再停一手结束。'} />
+      <InteractionHint steps={['空点落子', '点子看气', '停手计分']} activeStep={result ? 2 : selectedGroup ? 1 : 0} note={(selectedGroup ? '气就是相邻的空点。深绿框围住同一块棋，绿点标出它的气。' : '棋子的气被围尽就会被提走。先实际提走死子，再由双方连续停一手结束对局。') + (mode === 'ai' ? '悔棋不限次数，每次回到你上一手行棋前。' : '')} />
       <div className="go-board-heading"><span>9 路快速对局</span><span>第 {position.moveNumber + (result ? 0 : 1)} 手</span></div>
       <ResponsiveBoard width={BOARD_WIDTH + 26} height={BOARD_WIDTH + 26}>
         <div key={epoch} className="go-board-outer">
