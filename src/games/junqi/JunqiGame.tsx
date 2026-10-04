@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
+import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import {
   applyMove,
   createInitialBoard,
@@ -20,7 +21,7 @@ import {
 import { resolveCombat } from './junqiCombat'
 import type { Board, Move, Side } from './junqiTypes'
 import { COLS, ROWS, pieceLabel, pieceName } from './junqiTypes'
-import { getWinnerJunqi, legalMovesFrom, pickAiMoveJunqi } from './junqiMoves'
+import { getWinnerJunqi, legalMovesFrom } from './junqiMoves'
 
 type Mode = 'local' | 'ai'
 
@@ -43,6 +44,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   const [winner, setWinner] = useState<Side | null>(null)
   const [lastMove, setLastMove] = useState<Move | null>(null)
   const [history, setHistory] = useState<JunqiSnap[]>([])
+  const [aiError, setAiError] = useState(false)
 
   const reduceMotion = useReducedMotion()
 
@@ -56,11 +58,12 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   }, [board, selected, turn])
 
   const status = useMemo(() => {
+    if (aiError) return '电脑计算遇到问题，请重新开始'
     if (winner) return `${winner === 'red' ? '红方' : '蓝方'} 胜`
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     if (selected && targets.length === 0) return '该棋子不可移动 · 换一枚棋子'
     return `${turn === 'red' ? '红方' : '蓝方'}行棋 · ${selected ? '选择落点' : '选择棋子'}`
-  }, [winner, mode, turn, aiSide, selected, targets.length])
+  }, [winner, mode, turn, aiSide, selected, targets.length, aiError])
 
   const reset = useCallback(() => {
     setBoard(createInitialBoard())
@@ -69,6 +72,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
     setWinner(null)
     setLastMove(null)
     setHistory([])
+    setAiError(false)
   }, [])
 
   const undo = useCallback(() => {
@@ -104,17 +108,15 @@ export function JunqiGame({ mode }: { mode: Mode }) {
   )
 
   useEffect(() => {
-    if (winner || mode !== 'ai' || turn !== aiSide) return
-    const t = window.setTimeout(() => {
-      const m = pickAiMoveJunqi(board, aiSide)
+    if (winner || aiError || mode !== 'ai' || turn !== aiSide) return
+    return scheduleAiMove('junqi', { board, side: aiSide }, (m) => {
       if (!m) {
         setWinner(humanSide)
         return
       }
       tryMove(m)
-    }, 400)
-    return () => window.clearTimeout(t)
-  }, [winner, mode, turn, board, aiSide, humanSide, tryMove])
+    }, 140, () => setAiError(true))
+  }, [winner, aiError, mode, turn, board, aiSide, humanSide, tryMove])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return

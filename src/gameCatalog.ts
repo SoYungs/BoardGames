@@ -1,4 +1,7 @@
-export type GameId = 'gomoku' | 'xiangqi' | 'shogi' | 'chess' | 'junqi'
+export type BoardGameId = 'gomoku' | 'xiangqi' | 'shogi' | 'chess' | 'junqi' | 'go'
+export type PuzzleId = 'sokoban' | 'huarong'
+export type GameId = BoardGameId | PuzzleId
+export function isPuzzle(game: GameId): game is PuzzleId { return game === 'sokoban' || game === 'huarong' }
 
 export const gameCatalog = {
   gomoku: {
@@ -35,6 +38,27 @@ export const gameCatalog = {
     first: '红方先手', board: '6 × 12 简化盘',
     rules: ['本作使用简化棋盘，随机布阵，每方 25 子，军旗位于大本营。', '铁路可直行，工兵可转弯；行营内棋子不能被攻击，本营内棋子不能移动。', '吃掉敌方军旗，或使对方无子可走获胜。此变体仅交战后亮明棋子。'],
     tip: '工兵能排雷，炸弹与对方同归于尽；攻击前先判断风险。',
+  },
+  go: {
+    name: '围棋', english: 'GO', tag: '黑白之间，围出天地', category: '经典 · 围地',
+    description: '从九路小棋盘开始，连接、包围与提子，让每一步都有分量。',
+    first: '黑棋先手', board: '9 × 9 路',
+    rules: ['黑白轮流落子，相连棋子共用气，无气的敌子会被提走；禁止自杀。', '采用简单劫：不能立即还原上一手棋盘。可停一手，连续两次停着结束。', '按棋子与围空的面积计分，白贴 6.5 目。双方须先提净死子；结束时不自动判定死子。'],
+    tip: '被打吃时先数气；将弱棋连在一起，比单纯追着对手跑更稳妥。',
+  },
+  sokoban: {
+    name: '推箱子', english: 'SOKOBAN', tag: '向前一步，先想三步', category: '益智 · 关卡',
+    description: '把每只箱子送到目标上。不能拉回的那一步，最考验你的判断。',
+    first: '单人闯关', board: '精选关卡',
+    rules: ['使用方向键、WASD 或屏幕方向按钮移动。', '一次只能推动一只箱子，不能拉箱子，也不能穿过墙壁。', '将所有箱子推上目标即可过关；卡住时可撤销或重开。'],
+    tip: '箱子一旦进入没有目标的墙角，就无法再推出；先给自己留条路。',
+  },
+  huarong: {
+    name: '华容道', english: 'HUARONG', tag: '方寸腾挪，寻一条出路', category: '益智 · 滑块',
+    description: '从横刀立马的布局出发，挪动将士，为曹操腾出下方的出口。',
+    first: '单人解谜', board: '4 × 5 格',
+    rules: ['先点击选择棋子，再使用方向键、WASD 或屏幕按钮移动。', '棋子只能沿上下左右滑动，不能重叠，也不能离开棋盘。', '将 2×2 的曹操移动到下方中央出口即获胜。每次移动一格记一步。'],
+    tip: '两个空格的位置是关键。把它们合在一起，才能让大棋子通过。',
   },
 } satisfies Record<GameId, { name: string; english: string; tag: string; category: string; description: string; first: string; board: string; rules: string[]; tip: string }>
 

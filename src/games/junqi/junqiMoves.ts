@@ -122,8 +122,4 @@ export function getWinnerJunqi(board: Board, nextTurn: Side): Side | null {
   return null
 }
 
-export function pickAiMoveJunqi(board: Board, side: Side): Move | null {
-  const moves = allLegalMoves(board, side)
-  if (moves.length === 0) return null
-  return moves[Math.floor(Math.random() * moves.length)]!
-}
+export { pickAiMoveJunqi } from './junqiAi'

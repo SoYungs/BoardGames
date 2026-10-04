@@ -15,16 +15,25 @@ class WorkerStub {
   terminate() { this.terminated = true }
 }
 
-function withWorkerEnvironment(run: (advance: () => void) => void) {
+function withWorkerEnvironment(run: (advance: () => void, pending: () => number) => void) {
   const originalWindow = globalThis.window
   const originalWorker = globalThis.Worker
-  let timer = () => {}
+  const timers = new Map<number, { callback: () => void; delay: number }>()
+  let timerId = 0
   WorkerStub.instances = []
   Object.assign(globalThis, {
-    window: { setTimeout: (callback: () => void) => { timer = callback; return 1 }, clearTimeout: () => { timer = () => {} } },
+    window: {
+      setTimeout: (callback: () => void, delay: number) => { timers.set(++timerId, { callback, delay }); return timerId },
+      clearTimeout: (id: number) => { timers.delete(id) },
+    },
     Worker: WorkerStub,
   })
-  try { run(() => timer()) } finally {
+  try {
+    run(() => {
+      const next = [...timers.entries()].sort((a, b) => a[1].delay - b[1].delay)[0]
+      if (next) { timers.delete(next[0]); next[1].callback() }
+    }, () => timers.size)
+  } finally {
     if (originalWindow === undefined) Reflect.deleteProperty(globalThis, 'window')
     else globalThis.window = originalWindow
     if (originalWorker === undefined) Reflect.deleteProperty(globalThis, 'Worker')
@@ -52,8 +61,8 @@ test('reset during thinking terminates the worker and ignores a late reply', () 
   })
 })
 
-test('a worker applies its result once and then terminates', () => {
-  withWorkerEnvironment(advance => {
+test('a worker applies its result once and clears its watchdog', () => {
+  withWorkerEnvironment((advance, pending) => {
     const moves: [number, number][] = []
     scheduleAiMove('gomoku', { board: emptyBoard(), side: 2 }, move => { if (move) moves.push(move) })
     advance()
@@ -62,6 +71,35 @@ test('a worker applies its result once and then terminates', () => {
     worker.onmessage?.({ data: { move: [8, 8] } })
     assert.deepEqual(moves, [[7, 7]])
     assert.equal(worker.terminated, true)
+    assert.equal(pending(), 0)
+  })
+})
+
+test('an unresponsive worker times out once without becoming a game result', () => {
+  withWorkerEnvironment((advance, pending) => {
+    let failures = 0
+    scheduleAiMove('gomoku', { board: emptyBoard(), side: 2 }, () => assert.fail('timeout became a move'), 140, () => { failures++ })
+    advance()
+    const worker = WorkerStub.instances[0]
+    assert.equal(pending(), 1)
+    advance()
+    assert.equal(failures, 1)
+    assert.equal(worker.terminated, true)
+    assert.equal(pending(), 0)
+    worker.onmessage?.({ data: { move: [7, 7] } })
+    worker.onerror?.({ preventDefault: () => {} })
+    assert.equal(failures, 1)
+  })
+})
+
+test('reset while a worker is running also cancels its watchdog', () => {
+  withWorkerEnvironment((advance, pending) => {
+    const cancel = scheduleAiMove('gomoku', { board: emptyBoard(), side: 2 }, () => assert.fail('cancelled result applied'), 140, () => assert.fail('cancelled failure reported'))
+    advance()
+    assert.equal(pending(), 1)
+    cancel()
+    assert.equal(pending(), 0)
+    advance()
   })
 })
 

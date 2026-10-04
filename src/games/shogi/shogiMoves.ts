@@ -1,5 +1,5 @@
 import type { Board, Hand, Move, Piece, PieceType, Side } from './shogiTypes'
-import { COLS, PIECE_VALUE, ROWS } from './shogiTypes'
+import { COLS, ROWS } from './shogiTypes'
 import { applyShogiMove, canPromote, mustPromote } from './shogiBoard'
 
 const FWD: Record<Side, number> = { sente: -1, gote: 1 }
@@ -268,27 +268,16 @@ export function allLegalMovesChecked(board: Board, hand: Hand, side: Side): Move
       if (p?.side === side) out.push(...legalMovesFromChecked(board, hand, r, c))
     }
   }
-  out.push(
-    ...dropMoves(board, hand, side).filter((m) => {
-      const { board: next, hand: nextHand } = applyShogiMove(board, hand, m, side)
-      return !inCheck(next, side) && !pawnDropMates(next, nextHand, side, m)
-    }),
-  )
+  out.push(...legalDropMoves(board, hand, side))
   return out
 }
 
-export function pickAiMoveShogi(board: Board, hand: Hand, side: Side): Move | null {
-  const moves = allLegalMovesChecked(board, hand, side)
-  if (moves.length === 0) return null
-  const scored = moves.map((m) => {
-    const { board: next } = applyShogiMove(board, hand, m, side)
-    const cap = board[m.toR]?.[m.toC]
-    let s = cap ? PIECE_VALUE[cap.type] * 3 : 0
-    if (m.dropType) s += PIECE_VALUE[m.dropType]
-    if (m.promote) s += 8
-    if (inCheck(next, side === 'sente' ? 'gote' : 'sente')) s += 12
-    return { m, s: s + Math.random() * 4 }
-  })
-  scored.sort((a, b) => b.s - a.s)
-  return scored[0]!.m
+export function* legalDropMoves(board: Board, hand: Hand, side: Side, check: () => void = () => {}): Generator<Move> {
+  for (const move of dropMoves(board, hand, side)) {
+    check()
+    const { board: next, hand: nextHand } = applyShogiMove(board, hand, move, side)
+    if (!inCheck(next, side) && !pawnDropMates(next, nextHand, side, move)) yield move
+  }
 }
+
+export { pickAiMoveShogi } from './shogiAi'

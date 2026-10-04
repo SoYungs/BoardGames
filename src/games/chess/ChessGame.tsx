@@ -149,7 +149,7 @@ export function ChessGame({ mode }: { mode: Mode }) {
         return
       }
       setTurn('white')
-    }, 320, () => setAiError(true))
+    }, 140, () => setAiError(true))
   }, [winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {

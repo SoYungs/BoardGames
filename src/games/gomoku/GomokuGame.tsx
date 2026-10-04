@@ -27,7 +27,7 @@ export function GomokuGame({ mode }: { mode: Mode }) {
     if (mode !== 'ai' || winner || turn !== 2) return
     return scheduleAiMove('gomoku', { board, side: 2 }, move => {
       if (move) setState(current => current.turn === 2 && current.board === board ? placeStone(current, ...move) : current)
-    }, 360, () => setAiError(true))
+    }, 140, () => setAiError(true))
   }, [board, mode, turn, winner])
 
   const status = aiError ? '电脑计算遇到问题，请重新开始' : winner === 'draw' ? '满盘和棋' : winner ? `${winner === 1 ? '黑棋' : '白棋'} 获胜` : mode === 'ai' && turn === 2 ? '电脑思考中…' : `${turn === 1 ? '黑棋' : '白棋'} 落子`

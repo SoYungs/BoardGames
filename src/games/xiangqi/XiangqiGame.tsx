@@ -147,7 +147,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       }
       setBoard(next)
       setTurn('red')
-    }, 320, () => setAiError(true))
+    }, 140, () => setAiError(true))
   }, [winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {

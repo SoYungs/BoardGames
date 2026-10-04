@@ -180,7 +180,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
         return
       }
       setTurn('sente')
-    }, 360, () => setAiError(true))
+    }, 140, () => setAiError(true))
   }, [winner, mode, turn, aiSide, humanSide, board, hand])
 
   const onCellClick = (r: number, c: number) => {
