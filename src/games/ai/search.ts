@@ -33,24 +33,46 @@ export function searchBestMove<P, M, S>(position: P, side: S, adapter: SearchAda
   const root: M[] = []
   let best: M | null = null
   let fallbackScore = -Infinity
+  const knownLosing = new Set<M>()
   const ranked: { move: M; score: number; fallback: number }[] = []
+  const assess = (move: M) => {
+    check()
+    const score = adapter.order(position, move, side)
+    const fallback = adapter.fallback ? adapter.fallback(position, move, side, check) : score
+    ranked.push({ move, score, fallback })
+    if (fallback < -MATE_SCORE + 100) knownLosing.add(move)
+    if (fallback > fallbackScore) { fallbackScore = fallback; best = move }
+    return fallback > MATE_SCORE - 100
+  }
   try {
-    // Even a zero budget obtains one legal fallback before cancellation.
-    for (const move of adapter.moves(position, side, () => { if (root.length) check() })) {
-      root.push(move)
-      best ??= move
+    // Even a zero budget obtains one legal fallback before cancellation. With
+    // time remaining, reserve one more legal move before the expensive screen:
+    // if the first is proved losing as time expires, a legal alternative exists.
+    // Only this small reserve is prefetched; large drop lists remain cancellable.
+    const iterator = adapter.moves(position, side, () => { if (root.length) check() })[Symbol.iterator]()
+    const first = iterator.next()
+    if (first.done) return null
+    root.push(first.value)
+    check()
+    const reserve = iterator.next()
+    if (!reserve.done) root.push(reserve.value)
+    for (const move of root) {
+      if (assess(move)) return move
       check()
-      const score = adapter.order(position, move, side)
-      const fallback = adapter.fallback ? adapter.fallback(position, move, side, check) : score
-      ranked.push({ move, score, fallback })
-      if (fallback > fallbackScore) { fallbackScore = fallback; best = move }
-      if (fallback > MATE_SCORE - 100) return move
+    }
+    if (!reserve.done) for (let next = iterator.next(); !next.done; next = iterator.next()) {
+      root.push(next.value)
+      if (assess(next.value)) return next.value
       check()
     }
   } catch (error) { if (error !== TIMEOUT) throw error }
   if (!root.length) return null
+  // A candidate interrupted during its safety check never replaces a complete
+  // safe result. If every complete result is proven losing, prefer an untested
+  // legal candidate over deliberately returning a demonstrated mating loss.
+  const emergency = () => root.find(move => !knownLosing.has(move)) ?? best ?? root[0]
   // Keep only fully evaluated safety scores if generation/preflight times out.
-  if (!ranked.length || now() >= deadline) return best
+  if (!ranked.length || now() >= deadline) return fallbackScore < -MATE_SCORE + 100 ? emergency() : best
   ranked.sort((a, b) => b.fallback - a.fallback || b.score - a.score)
   best = ranked[0].move
   const candidates = ranked.slice(0, options.rootLimit ?? ranked.length).map(entry => entry.move)

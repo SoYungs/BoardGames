@@ -85,6 +85,59 @@ test('a king cannot castle from, through, or into an attacked square', () => {
   }
 })
 
+test('targeted attack checks preserve blocked rays, jumping knights, pawn diagonals and adjacent kings', () => {
+  for (const side of ['white', 'black'] as const) {
+    const opponent = side === 'white' ? 'black' : 'white'
+    for (const type of ['r', 'b', 'q'] as const) {
+      const board = emptyBoard()
+      const diagonal = type === 'b'
+      place(board, 4, 4, side, 'k')
+      place(board, 0, diagonal ? 0 : 4, opponent, type)
+      assert.equal(inCheck(board, side), true)
+      place(board, 2, diagonal ? 2 : 4, side, 'p')
+      assert.equal(inCheck(board, side), false)
+      place(board, 2, diagonal ? 2 : 4, opponent, 'p')
+      assert.equal(inCheck(board, side), false)
+    }
+    const knightBoard = emptyBoard()
+    place(knightBoard, 4, 4, side, 'k')
+    place(knightBoard, 2, 3, opponent, 'n')
+    place(knightBoard, 3, 3, side, 'p')
+    assert.equal(inCheck(knightBoard, side), true)
+
+    const pawnBoard = emptyBoard()
+    place(pawnBoard, 4, 4, side, 'k')
+    const pawnRow = side === 'white' ? 3 : 5
+    place(pawnBoard, pawnRow, 4, opponent, 'p')
+    assert.equal(inCheck(pawnBoard, side), false)
+    pawnBoard[pawnRow][4] = null
+    place(pawnBoard, pawnRow, 3, opponent, 'p')
+    assert.equal(inCheck(pawnBoard, side), true)
+
+    const kings = emptyBoard()
+    place(kings, 4, 4, side, 'k')
+    place(kings, 3, 3, opponent, 'k')
+    assert.equal(inCheck(kings, side), true)
+    kings[3][3] = null
+    place(kings, 2, 2, opponent, 'k')
+    assert.equal(inCheck(kings, side), false)
+  }
+})
+
+test('castling respects pawn and king attacks on empty transit or destination squares', () => {
+  const board = emptyBoard()
+  place(board, 7, 4, 'white', 'k')
+  place(board, 7, 7, 'white', 'r')
+  place(board, 0, 0, 'black', 'k')
+  place(board, 6, 4, 'black', 'p')
+  assert.equal(inCheck(board, 'white'), false)
+  assert.equal(legalMovesFromChecked(board, initialMeta(), 7, 4).some(move => move.castle === 'kingside'), false)
+  board[6][4] = board[0][0] = null
+  place(board, 6, 7, 'black', 'k')
+  assert.equal(inCheck(board, 'white'), false)
+  assert.equal(legalMovesFromChecked(board, initialMeta(), 7, 4).some(move => move.castle === 'kingside'), false)
+})
+
 test('both sides can promote to queen, rook, bishop, or knight on a quiet move or capture', () => {
   for (const side of ['white', 'black'] as const) {
     const board = emptyBoard()

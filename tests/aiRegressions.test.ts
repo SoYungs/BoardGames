@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { boundedAiBudget, searchBestMove, type SearchAdapter } from '../src/games/ai/search.ts'
+import { boundedAiBudget, MATE_SCORE, searchBestMove, type SearchAdapter } from '../src/games/ai/search.ts'
 import { applyMove as chessApply, initialMeta } from '../src/games/chess/chessBoard.ts'
 import { allLegalMovesChecked as chessMoves, inCheck as chessCheck, legalMovesFromChecked as chessFrom, pickAiMoveChess } from '../src/games/chess/chessMoves.ts'
 import type { Piece as ChessPiece } from '../src/games/chess/chessTypes.ts'
@@ -44,6 +44,68 @@ test('root generation timing out preserves the best completely assessed safe fal
     terminal: () => 0,
   }
   assert.equal(searchBestMove('root', 1, adapter, { budgetMs: 20, now: () => clock }), 'safe')
+})
+
+test('an interrupted safety screen never admits its high material score or returns a known mating loss', () => {
+  for (const firstScore of [20, -MATE_SCORE + 2]) {
+    let clock = 0
+    const adapter: SearchAdapter<string, string, number> = {
+      *moves(_position, _side, check) { yield 'screened'; check(); yield 'interrupted' },
+      apply: (_position, move) => move,
+      other: side => -side,
+      evaluate: () => assert.fail('expired safety screen started a deeper search'),
+      order: (_position, move) => move === 'interrupted' ? 10_000 : 0,
+      fallback(_position, move, _side, check) {
+        if (move === 'screened') return firstScore
+        clock = 20
+        check()
+        return 10_000
+      },
+      tactical: () => false,
+      inCheck: () => false,
+      terminal: () => 0,
+    }
+    const selected = searchBestMove('root', 1, adapter, { budgetMs: 20, now: () => clock })
+    // A completely safe result survives. If it is known to be mated, the
+    // untested legal move is the emergency choice, not a claimed safe result.
+    assert.equal(selected, firstScore > -MATE_SCORE + 100 ? 'screened' : 'interrupted')
+  }
+})
+
+test('an interruption inside the first safety screen still returns a legal emergency move', () => {
+  let clock = 0
+  const adapter: SearchAdapter<string, string, number> = {
+    *moves() { yield 'first-legal'; yield 'second-legal' },
+    apply: (_position, move) => move,
+    other: side => -side,
+    evaluate: () => assert.fail('expired first screen started a deeper search'),
+    order: () => 0,
+    fallback(_position, _move, _side, check) { clock = 20; check(); return 0 },
+    tactical: () => false,
+    inCheck: () => false,
+    terminal: () => 0,
+  }
+  assert.equal(searchBestMove('root', 1, adapter, { budgetMs: 20, now: () => clock }), 'first-legal')
+})
+
+test('a legal reserve survives the deadline reached by proving the first move loses to mate', () => {
+  let clock = 0
+  const adapter: SearchAdapter<string, string, number> = {
+    *moves(_position, _side, check) { yield 'known-mating-loss'; check(); yield 'legal-reserve'; check(); yield 'later' },
+    apply: (_position, move) => move,
+    other: side => -side,
+    evaluate: () => assert.fail('expired mating screen started a deeper search'),
+    order: () => 0,
+    fallback(_position, move) {
+      assert.equal(move, 'known-mating-loss')
+      clock = 20
+      return -MATE_SCORE + 2
+    },
+    tactical: () => false,
+    inCheck: () => false,
+    terminal: () => 0,
+  }
+  assert.equal(searchBestMove('root', 1, adapter, { budgetMs: 20, now: () => clock }), 'legal-reserve')
 })
 
 test('quiescence must answer check even when the nominal capture depth is zero', () => {
@@ -93,7 +155,7 @@ test('chess underpromotes to a rook rather than immediately stalemating with a q
   }
 })
 
-test('chess avoids a quiet mate in one instead of grabbing an undefended rook', () => {
+function quietMatePosition() {
   const position = board<ChessPiece>(8, 8)
   position[7][7] = { id: 'wk', side: 'white', type: 'k' }
   position[6][7] = { id: 'whp', side: 'white', type: 'p' }
@@ -103,18 +165,51 @@ test('chess avoids a quiet mate in one instead of grabbing an undefended rook', 
   position[5][6] = { id: 'bq', side: 'black', type: 'q' }
   position[2][2] = { id: 'bb', side: 'black', type: 'b' }
   position[4][1] = { id: 'br', side: 'black', type: 'r' }
-  const meta = initialMeta()
-  const afterGreedy = chessApply(position, meta, { fromR: 4, fromC: 3, toR: 4, toC: 1 })
-  const mates = (next: ReturnType<typeof chessApply>) => chessMoves(next.board, next.meta, 'black').filter(reply => {
+  return position
+}
+
+function matingReplies(next: ReturnType<typeof chessApply>) {
+  return chessMoves(next.board, next.meta, 'black').filter(reply => {
     const after = chessApply(next.board, next.meta, reply)
     return chessCheck(after.board, 'white') && !chessMoves(after.board, after.meta, 'white').length
   })
-  assert.ok(mates(afterGreedy).length)
+}
+
+test('chess avoids a quiet mate in one instead of grabbing an undefended rook', () => {
+  const position = quietMatePosition()
+  const meta = initialMeta()
+  const afterGreedy = chessApply(position, meta, { fromR: 4, fromC: 3, toR: 4, toC: 1 })
+  assert.ok(matingReplies(afterGreedy).length)
   for (const budget of budgets) {
     const move = pickAiMoveChess(position, meta, 'white', budget)
     assert.ok(move)
-    assert.equal(mates(chessApply(position, meta, move)).length, 0)
+    assert.equal(matingReplies(chessApply(position, meta, move)).length, 0)
   }
+})
+
+test('chess mate screening survives reduced work per deadline without accepting an unfinished candidate', () => {
+  const position = quietMatePosition(), meta = initialMeta()
+  const before = structuredClone({ position, meta })
+  const originalClock = Object.getOwnPropertyDescriptor(performance, 'now')
+  // Advancing the clock at each cancellation check deterministically recreates
+  // both the old greedy material fallback and first-candidate interruptions.
+  // This uses no wall-clock expectation or dependence on the runner's CPU.
+  for (const step of [.002, .003, .03, .1]) {
+    let clock = 0
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => clock += step })
+    let move
+    try {
+      move = pickAiMoveChess(position, meta, 'white', 0)
+    } finally {
+      if (originalClock) Object.defineProperty(performance, 'now', originalClock)
+      else Reflect.deleteProperty(performance, 'now')
+    }
+    assert.ok(move)
+    assert.ok(chessMoves(position, meta, 'white').some(candidate => sameMove(candidate, move)))
+    assert.equal(matingReplies(chessApply(position, meta, move)).length, 0, `clock step ${step}`)
+    assert.ok(clock < 26, `25ms tactical floor escaped its controlled deadline: ${clock}`)
+  }
+  assert.deepEqual({ position, meta }, before)
 })
 
 test('chess safety fallback does not count a pinned knight as a legal recapturer', () => {

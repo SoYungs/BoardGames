@@ -191,24 +191,35 @@ export function findKing(board: Board, side: Side): [number, number] | null {
   return null
 }
 
+const ATTACK_RAYS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const
+const KNIGHT_ATTACKS = [[2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [1, -2], [-1, 2], [-1, -2]] as const
+
 function squareAttacked(board: Board, r: number, c: number, defender: Side): boolean {
   const attacker: Side = defender === 'white' ? 'black' : 'white'
-  for (let rr = 0; rr < ROWS; rr++) {
-    for (let cc = 0; cc < COLS; cc++) {
-      const p = board[rr][cc]
-      if (p?.side !== attacker) continue
-      const raw: Move[] = []
-      if (p.type === 'p') {
-        const dir = attacker === 'white' ? -1 : 1
-        if (rr + dir === r && (cc + 1 === c || cc - 1 === c)) return true
-        continue
+  const pawnRow = r + (attacker === 'white' ? 1 : -1)
+  for (const dc of [-1, 1]) {
+    const pawn = board[pawnRow]?.[c + dc]
+    if (pawn?.side === attacker && pawn.type === 'p') return true
+  }
+  for (const [dr, dc] of KNIGHT_ATTACKS) {
+    const knight = board[r + dr]?.[c + dc]
+    if (knight?.side === attacker && knight.type === 'n') return true
+  }
+  // Looking outward from the queried square avoids generating every enemy's
+  // complete move list for each legality and one-move-mate check.
+  for (const [dr, dc] of ATTACK_RAYS) {
+    let rr = r + dr, cc = c + dc
+    while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS) {
+      const piece = board[rr][cc]
+      if (piece) {
+        if (piece.side === attacker) {
+          if (piece.type === 'k' && Math.abs(rr - r) <= 1 && Math.abs(cc - c) <= 1) return true
+          if (piece.type === 'q' || piece.type === (dr && dc ? 'b' : 'r')) return true
+        }
+        break
       }
-      if (p.type === 'k') {
-        if (Math.abs(rr - r) <= 1 && Math.abs(cc - c) <= 1) return true
-        continue
-      }
-      movesForPiece(board, { castling: { white: { kingside: false, queenside: false }, black: { kingside: false, queenside: false } }, enPassant: null }, rr, cc, p, raw)
-      if (raw.some((m) => m.toR === r && m.toC === c)) return true
+      rr += dr
+      cc += dc
     }
   }
   return false

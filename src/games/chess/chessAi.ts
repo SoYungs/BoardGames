@@ -1,7 +1,7 @@
 import { boundedAiBudget, MATE_SCORE, searchBestMove } from '../ai/search'
 import { immediateCaptureGain, type CaptureAdapter } from '../ai/tactics'
 import { applyMove } from './chessBoard'
-import { inCheck, legalMovesFrom, legalMovesFromChecked } from './chessMoves'
+import { inCheck, legalMovesFrom } from './chessMoves'
 import { PIECE_VALUE, type Board, type GameMeta, type Move, type Piece, type Side } from './chessTypes'
 
 type Position = { board: Board; meta: GameMeta }
@@ -10,17 +10,38 @@ const other = (side: Side): Side => side === 'white' ? 'black' : 'white'
 
 function* moves(position: Position, side: Side, check: () => void): Generator<Move> {
   for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    if (position.board[r][c]?.side !== side) continue
     check()
-    if (position.board[r][c]?.side === side) yield* legalMovesFromChecked(position.board, position.meta, r, c)
+    for (const move of legalMovesFrom(position.board, position.meta, r, c)) {
+      if (position.board[move.toR][move.toC]?.type === 'k') continue
+      check()
+      if (!inCheck(applyMove(position.board, position.meta, move).board, side)) yield move
+    }
   }
+}
+
+function canMateInOne(position: Position, attacker: Side, check: () => void): boolean {
+  const defender = other(attacker)
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    if (position.board[r][c]?.side !== attacker) continue
+    check()
+    for (const move of legalMovesFrom(position.board, position.meta, r, c)) {
+      if (position.board[move.toR][move.toC]?.type === 'k') continue
+      check()
+      const next = applyMove(position.board, position.meta, move)
+      if (!inCheck(next.board, defender) || inCheck(next.board, attacker)) continue
+      if (moves(next, defender, check).next().done) return true
+    }
+  }
+  return false
 }
 
 const exchanges: CaptureAdapter<Position, Move, Side> = {
   *captures(position, side, check, target) {
     for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-      check()
       const piece = position.board[r][c]
       if (piece?.side !== side) continue
+      check()
       for (const move of legalMovesFrom(position.board, position.meta, r, c)) {
         if (target && (move.toR !== target[0] || move.toC !== target[1])) continue
         const victim = position.board[move.toR][move.toC]
@@ -111,6 +132,9 @@ export function pickAiMoveChess(board: Board, meta: GameMeta, side: Side, budget
       const next = applyMove(position.board, position.meta, move)
       const opponent = other(turn)
       if (moves(next, opponent, check).next().done) return inCheck(next.board, opponent) ? MATE_SCORE - 1 : 0
+      // Finish the mating-reply screen before accepting a material gain. If it
+      // times out, the shared search keeps an earlier fully screened fallback.
+      if (canMateInOne(next, opponent, check)) return -MATE_SCORE + 2
       return evaluate(next, turn) - immediateCaptureGain(next, opponent, exchanges, check)
     },
     tactical: (position, move) => !!position.board[move.toR][move.toC] || !!move.promotion
