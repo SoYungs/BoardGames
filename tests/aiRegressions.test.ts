@@ -132,16 +132,23 @@ test('non-finite and negative budgets cannot bypass the 900ms cap or the tactica
   assert.equal(boundedAiBudget(-5), 0)
 })
 
+function underpromotionPosition(side: ChessPiece['side']) {
+  const position = board<ChessPiece>(8, 8)
+  const mirror = (r: number) => side === 'white' ? r : 7 - r
+  const opponent = side === 'white' ? 'black' : 'white'
+  position[mirror(2)][2] = { id: 'own-king', side, type: 'k' }
+  position[mirror(1)][2] = { id: 'pawn', side, type: 'p' }
+  position[mirror(1)][0] = { id: 'opponent-king', side: opponent, type: 'k' }
+  return position
+}
+
 test('chess underpromotes to a rook rather than immediately stalemating with a queen, for either colour', () => {
   for (const side of ['white', 'black'] as const) {
-    const position = board<ChessPiece>(8, 8)
-    const mirror = (r: number) => side === 'white' ? r : 7 - r
+    const position = underpromotionPosition(side)
+    const pawnRow = side === 'white' ? 1 : 6
     const opponent = side === 'white' ? 'black' : 'white'
-    position[mirror(2)][2] = { id: 'own-king', side, type: 'k' }
-    position[mirror(1)][2] = { id: 'pawn', side, type: 'p' }
-    position[mirror(1)][0] = { id: 'opponent-king', side: opponent, type: 'k' }
     const meta = initialMeta()
-    const queen = chessFrom(position, meta, mirror(1), 2).find(move => move.promotion === 'q')!
+    const queen = chessFrom(position, meta, pawnRow, 2).find(move => move.promotion === 'q')!
     const drawn = chessApply(position, meta, queen)
     assert.equal(chessCheck(drawn.board, opponent), false)
     assert.equal(chessMoves(drawn.board, drawn.meta, opponent).length, 0)
@@ -152,6 +159,134 @@ test('chess underpromotes to a rook rather than immediately stalemating with a q
       const next = chessApply(position, meta, move)
       assert.ok(chessMoves(next.board, next.meta, opponent).length)
     }
+  }
+})
+
+test('both colours reach safe underpromotion before quiet king moves consume a short deadline', () => {
+  const originalClock = Object.getOwnPropertyDescriptor(performance, 'now')
+  // Previously the black king was enumerated first; at these controlled work
+  // rates its quiet moves exhausted the floor before the promoting pawn.
+  for (const side of ['white', 'black'] as const) for (const step of [.3, .5]) for (const budget of [0, 1]) {
+    const position = underpromotionPosition(side), meta = initialMeta()
+    const before = structuredClone({ position, meta })
+    const opponent = side === 'white' ? 'black' : 'white'
+    let clock = 0, move
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => clock += step })
+    try {
+      move = pickAiMoveChess(position, meta, side, budget)
+    } finally {
+      if (originalClock) Object.defineProperty(performance, 'now', originalClock)
+      else Reflect.deleteProperty(performance, 'now')
+    }
+    assert.ok(move)
+    assert.equal(move.promotion, 'r', `${side}, clock step ${step}, budget ${budget}`)
+    assert.ok(chessMoves(position, meta, side).some(candidate => sameMove(candidate, move)))
+    const next = chessApply(position, meta, move)
+    assert.ok(chessMoves(next.board, next.meta, opponent).length)
+    assert.ok(clock > 0 && clock < 27, `25ms floor escaped controlled deadline: ${clock}`)
+    assert.deepEqual({ position, meta }, before)
+  }
+})
+
+test('a known winning promotion conversion does not depend on which shallow round completes', () => {
+  const originalClock = Object.getOwnPropertyDescriptor(performance, 'now')
+  // At this work rate the old finite-depth search preferred a king move to
+  // prepare a later queen. Direct safe KR versus K is already a known win.
+  for (const side of ['white', 'black'] as const) for (const budget of [0, 1]) {
+    const position = underpromotionPosition(side), meta = initialMeta()
+    const before = structuredClone({ position, meta })
+    const opponent = side === 'white' ? 'black' : 'white'
+    let clock = 0, move
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => clock += .01 })
+    try {
+      move = pickAiMoveChess(position, meta, side, budget)
+    } finally {
+      if (originalClock) Object.defineProperty(performance, 'now', originalClock)
+      else Reflect.deleteProperty(performance, 'now')
+    }
+    assert.ok(move)
+    assert.equal(move.promotion, 'r')
+    assert.ok(chessMoves(position, meta, side).some(candidate => sameMove(candidate, move)))
+    const next = chessApply(position, meta, move)
+    assert.equal(chessCheck(next.board, opponent), false)
+    assert.ok(chessMoves(next.board, next.meta, opponent).length)
+    assert.ok(clock > 0 && clock < 25, `conversion exceeded the original deadline: ${clock}`)
+    assert.deepEqual({ position, meta }, before)
+  }
+})
+
+test('a safe queen conversion remains preferred when it does not stalemate the lone king', () => {
+  for (const side of ['white', 'black'] as const) {
+    const position = underpromotionPosition(side), meta = initialMeta()
+    const mirror = (r: number) => side === 'white' ? r : 7 - r
+    const opponent = side === 'white' ? 'black' : 'white'
+    position[mirror(1)][0] = null
+    position[mirror(0)][7] = { id: 'opponent-king', side: opponent, type: 'k' }
+    const move = pickAiMoveChess(position, meta, side, 0)
+    assert.ok(move)
+    assert.equal(move.promotion, 'q')
+    const next = chessApply(position, meta, move)
+    const replies = chessMoves(next.board, next.meta, opponent)
+    assert.ok(replies.length)
+    assert.equal(replies.some(reply => reply.toR === move.toR && reply.toC === move.toC), false)
+  }
+})
+
+test('a promotion square that the enemy king can capture is excluded from the conversion shortcut', () => {
+  for (const side of ['white', 'black'] as const) {
+    const position = board<ChessPiece>(8, 8)
+    const mirror = (r: number) => side === 'white' ? r : 7 - r
+    const opponent = side === 'white' ? 'black' : 'white'
+    position[mirror(7)][7] = { id: 'own-king', side, type: 'k' }
+    position[mirror(1)][2] = { id: 'pawn', side, type: 'p' }
+    position[mirror(1)][1] = { id: 'opponent-king', side: opponent, type: 'k' }
+    const meta = initialMeta(), before = structuredClone({ position, meta })
+    for (const promotion of ['q', 'r'] as const) {
+      const next = chessApply(position, meta, { fromR: mirror(1), fromC: 2, toR: mirror(0), toC: 2, promotion })
+      assert.ok(chessMoves(next.board, next.meta, opponent).some(reply => reply.toR === mirror(0) && reply.toC === 2))
+    }
+    for (const budget of budgets) {
+      let clock = 0, move
+      const originalClock = Object.getOwnPropertyDescriptor(performance, 'now')
+      Object.defineProperty(performance, 'now', { configurable: true, value: () => clock += .01 })
+      try {
+        move = pickAiMoveChess(position, meta, side, budget)
+      } finally {
+        if (originalClock) Object.defineProperty(performance, 'now', originalClock)
+        else Reflect.deleteProperty(performance, 'now')
+      }
+      assert.ok(move)
+      assert.ok(chessMoves(position, meta, side).some(candidate => sameMove(candidate, move)))
+      assert.equal(move.promotion, undefined)
+      assert.ok(clock < Math.max(25, budget) + 1)
+    }
+    assert.deepEqual({ position, meta }, before)
+  }
+})
+
+test('additional friendly material or a non-king opponent keeps promotion in the ordinary search', () => {
+  const originalClock = Object.getOwnPropertyDescriptor(performance, 'now')
+  for (const side of ['white', 'black'] as const) for (const extra of ['friendly-pawn', 'enemy-knight'] as const) {
+    const position = underpromotionPosition(side), meta = initialMeta()
+    const mirror = (r: number) => side === 'white' ? r : 7 - r
+    const opponent = side === 'white' ? 'black' : 'white'
+    if (extra === 'friendly-pawn') position[mirror(6)][7] = { id: 'extra', side, type: 'p' }
+    else position[mirror(0)][7] = { id: 'extra', side: opponent, type: 'n' }
+    const before = structuredClone({ position, meta })
+    let clock = 0, move
+    Object.defineProperty(performance, 'now', { configurable: true, value: () => clock += .01 })
+    try {
+      move = pickAiMoveChess(position, meta, side, 0)
+    } finally {
+      if (originalClock) Object.defineProperty(performance, 'now', originalClock)
+      else Reflect.deleteProperty(performance, 'now')
+    }
+    assert.ok(move)
+    assert.ok(chessMoves(position, meta, side).some(candidate => sameMove(candidate, move)))
+    // These broader positions reach the controlled iterative-search deadline;
+    // they must not take the immediate KQ/KR-versus-K conversion shortcut.
+    assert.ok(clock >= 25 && clock < 26, `${side}, ${extra}: ${clock}`)
+    assert.deepEqual({ position, meta }, before)
   }
 })
 

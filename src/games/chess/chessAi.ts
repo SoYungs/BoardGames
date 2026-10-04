@@ -8,19 +8,60 @@ type Position = { board: Board; meta: GameMeta }
 const value = (piece: Piece) => PIECE_VALUE[piece.type] * 10
 const other = (side: Side): Side => side === 'white' ? 'black' : 'white'
 
-function* moves(position: Position, side: Side, check: () => void): Generator<Move> {
-  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-    if (position.board[r][c]?.side !== side) continue
+// A private root shortcut, distinct from a mate score and the deadline signal.
+class SafePromotionConversion {
+  readonly move: Move
+  constructor(move: Move) { this.move = move }
+}
+
+function isPromotionEndgame({ board }: Position, side: Side, check: () => void): boolean {
+  let ownKings = 0, pawns = 0, enemyKings = 0
+  for (let r = 0; r < 8; r++) {
     check()
-    for (const move of legalMovesFrom(position.board, position.meta, r, c)) {
-      if (position.board[move.toR][move.toC]?.type === 'k') continue
-      check()
-      if (!inCheck(applyMove(position.board, position.meta, move).board, side)) yield move
+    for (const piece of board[r]) {
+      if (!piece) continue
+      if (piece.side === side) {
+        if (piece.type === 'k') ownKings++
+        else if (piece.type === 'p' && r === (side === 'white' ? 1 : 6)) pawns++
+        else return false
+      } else if (piece.type === 'k') enemyKings++
+      else return false
     }
+  }
+  return ownKings === 1 && pawns === 1 && enemyKings === 1
+}
+
+function* movesFrom(position: Position, side: Side, r: number, c: number, check: () => void): Generator<Move> {
+  check()
+  for (const move of legalMovesFrom(position.board, position.meta, r, c)) {
+    if (position.board[move.toR][move.toC]?.type === 'k') continue
+    check()
+    if (!inCheck(applyMove(position.board, position.meta, move).board, side)) yield move
+  }
+}
+
+function* moves(position: Position, side: Side, check: () => void): Generator<Move> {
+  const promotionRow = side === 'white' ? 1 : 6
+  // Both colours must reach their immediate promotion choices before quiet
+  // king moves can consume the short-budget safety pass. All four choices and
+  // the ordinary legality filter remain available; this is source ordering.
+  for (let c = 0; c < 8; c++) {
+    const piece = position.board[promotionRow][c]
+    if (piece?.side === side && piece.type === 'p') yield* movesFrom(position, side, promotionRow, c, check)
+  }
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const piece = position.board[r][c]
+    if (piece?.side !== side || (r === promotionRow && piece.type === 'p')) continue
+    yield* movesFrom(position, side, r, c, check)
   }
 }
 
 function canMateInOne(position: Position, attacker: Side, check: () => void): boolean {
+  check()
+  // A lone king cannot legally give check to the other king. Avoid scanning
+  // every king move when assessing promotion endgames; stalemate has already
+  // been checked by the fallback's legal-reply query.
+  if (!position.board.some(row => row.some(piece => piece?.side === attacker && piece.type !== 'k'))) return false
   const defender = other(attacker)
   for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
     if (position.board[r][c]?.side !== attacker) continue
@@ -123,25 +164,49 @@ function order({ board, meta }: Position, move: Move): number {
 }
 
 export function pickAiMoveChess(board: Board, meta: GameMeta, side: Side, budgetMs = 800): Move | null {
-  return searchBestMove({ board, meta }, side, {
-    moves,
-    apply: (position, move) => applyMove(position.board, position.meta, move),
-    other,
-    evaluate, order,
-    fallback: (position, move, turn, check) => {
-      const next = applyMove(position.board, position.meta, move)
-      const opponent = other(turn)
-      if (moves(next, opponent, check).next().done) return inCheck(next.board, opponent) ? MATE_SCORE - 1 : 0
-      // Finish the mating-reply screen before accepting a material gain. If it
-      // times out, the shared search keeps an earlier fully screened fallback.
-      if (canMateInOne(next, opponent, check)) return -MATE_SCORE + 2
-      return evaluate(next, turn) - immediateCaptureGain(next, opponent, exchanges, check)
-    },
-    tactical: (position, move) => !!position.board[move.toR][move.toC] || !!move.promotion
-      || (position.board[move.fromR][move.fromC]?.type === 'p' && position.meta.enPassant?.[0] === move.toR && position.meta.enPassant[1] === move.toC),
-    inCheck: (position, turn) => inCheck(position.board, turn),
-    terminal: (position, turn, ply) => inCheck(position.board, turn) ? -MATE_SCORE + ply : 0,
-    moveKey: move => `${move.fromR},${move.fromC},${move.toR},${move.toC},${move.promotion ?? ''},${move.castle ?? ''}`,
-    key: (position, turn) => `${turn}|${position.board.map(row => row.map(piece => piece ? piece.side === 'white' ? piece.type.toUpperCase() : piece.type : '.').join('')).join('')}|${JSON.stringify(position.meta)}`,
-  }, { budgetMs: boundedAiBudget(budgetMs, 25), maxDepth: 6, quiescenceDepth: 3 })
+  let promotionEndgame: boolean | undefined
+  try {
+    return searchBestMove({ board, meta }, side, {
+      moves,
+      apply: (position, move) => applyMove(position.board, position.meta, move),
+      other,
+      evaluate, order,
+      fallback: (position, move, turn, check) => {
+        const next = applyMove(position.board, position.meta, move)
+        const opponent = other(turn)
+        const replies = moves(next, opponent, check)
+        const firstReply = replies.next()
+        if (firstReply.done) return inCheck(next.board, opponent) ? MATE_SCORE - 1 : 0
+        if (move.promotion === 'q' || move.promotion === 'r') {
+          promotionEndgame ??= isPromotionEndgame(position, turn, check)
+          if (promotionEndgame) {
+            let reply: IteratorResult<Move> = firstReply
+            while (!reply.done) {
+              check()
+              if (reply.value.toR === move.toR && reply.value.toC === move.toC) break
+              reply = replies.next()
+            }
+            // A safe KQ/KR versus K converts to known winning material now. This
+            // avoids a shallow horizon preferring to delay promotion. It is not
+            // immediate mate; no score or game-result state is fabricated.
+            // Q is generated before R; a stalemating Q was rejected above.
+            if (reply.done) throw new SafePromotionConversion(move)
+          }
+        }
+        // Finish the mating-reply screen before accepting a material gain. If it
+        // times out, the shared search keeps an earlier fully screened fallback.
+        if (canMateInOne(next, opponent, check)) return -MATE_SCORE + 2
+        return evaluate(next, turn) - immediateCaptureGain(next, opponent, exchanges, check)
+      },
+      tactical: (position, move) => !!position.board[move.toR][move.toC] || !!move.promotion
+        || (position.board[move.fromR][move.fromC]?.type === 'p' && position.meta.enPassant?.[0] === move.toR && position.meta.enPassant[1] === move.toC),
+      inCheck: (position, turn) => inCheck(position.board, turn),
+      terminal: (position, turn, ply) => inCheck(position.board, turn) ? -MATE_SCORE + ply : 0,
+      moveKey: move => `${move.fromR},${move.fromC},${move.toR},${move.toC},${move.promotion ?? ''},${move.castle ?? ''}`,
+      key: (position, turn) => `${turn}|${position.board.map(row => row.map(piece => piece ? piece.side === 'white' ? piece.type.toUpperCase() : piece.type : '.').join('')).join('')}|${JSON.stringify(position.meta)}`,
+    }, { budgetMs: boundedAiBudget(budgetMs, 25), maxDepth: 6, quiescenceDepth: 3 })
+  } catch (error) {
+    if (error instanceof SafePromotionConversion) return error.move
+    throw error
+  }
 }
