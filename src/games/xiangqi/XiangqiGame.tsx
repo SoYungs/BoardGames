@@ -12,7 +12,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
@@ -136,8 +136,9 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     [board, turn, mode, lastMove, winner, selected],
   )
 
+  const present = useIsPresent()
   useEffect(() => {
-    if (winner || aiError || mode !== 'ai' || turn !== aiSide) return
+    if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
     const cur = boardForAiRef.current
     return scheduleAiMove('xiangqi', { board: cur, side: aiSide }, (m) => {
       if (!m) {
@@ -162,7 +163,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       setBoard(next)
       setTurn('red')
     }, 140, () => setAiError(true))
-  }, [winner, aiError, mode, turn, aiSide, humanSide])
+  }, [present, winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return

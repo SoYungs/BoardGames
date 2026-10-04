@@ -1,12 +1,16 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
-type Props = { children: ReactNode }
-type State = { error: Error | null }
+type Props = { children: ReactNode; resetKey: string }
+type State = { error: Error | null; resetKey: string }
 
 export class RouteErrorBoundary extends Component<Props, State> {
-  state: State = { error: null }
+  state: State = { error: null, resetKey: this.props.resetKey }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    return props.resetKey !== state.resetKey ? { error: null, resetKey: props.resetKey } : null
+  }
+
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error }
   }
 

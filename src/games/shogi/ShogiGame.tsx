@@ -12,7 +12,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { applyShogiMove, createInitialBoard, emptyHand, snapshotBoard, snapshotHand } from './shogiBoard'
@@ -181,8 +181,9 @@ export function ShogiGame({ mode }: { mode: Mode }) {
     [board, hand, turn, mode, lastMove, winner, selected, selectedDrop, targets],
   )
 
+  const present = useIsPresent()
   useEffect(() => {
-    if (winner || mode !== 'ai' || turn !== aiSide) return
+    if (!present || winner || mode !== 'ai' || turn !== aiSide) return
     return scheduleAiMove('shogi', { board, hand, side: aiSide }, (m: Move | null) => {
       if (!m) {
         setWinner(humanSide)
@@ -204,7 +205,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
       }
       setTurn('sente')
     }, 140, () => setAiError(true))
-  }, [winner, mode, turn, aiSide, humanSide, board, hand])
+  }, [present, winner, mode, turn, aiSide, humanSide, board, hand])
 
   const onCellClick = (r: number, c: number) => {
     if (winner || promotionChoices) return

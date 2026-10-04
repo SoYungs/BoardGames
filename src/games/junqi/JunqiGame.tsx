@@ -11,7 +11,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import {
@@ -120,8 +120,9 @@ export function JunqiGame({ mode }: { mode: Mode }) {
     [board, turn, mode, lastMove, winner, selected],
   )
 
+  const present = useIsPresent()
   useEffect(() => {
-    if (winner || aiError || mode !== 'ai' || turn !== aiSide) return
+    if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
     return scheduleAiMove('junqi', { board, side: aiSide }, (m) => {
       if (!m) {
         setWinner(humanSide)
@@ -129,7 +130,7 @@ export function JunqiGame({ mode }: { mode: Mode }) {
       }
       tryMove(m)
     }, 140, () => setAiError(true))
-  }, [winner, aiError, mode, turn, board, aiSide, humanSide, tryMove])
+  }, [present, winner, aiError, mode, turn, board, aiSide, humanSide, tryMove])
 
   const onCellClick = (r: number, c: number) => {
     if (winner) return

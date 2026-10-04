@@ -19,6 +19,7 @@ const DIRS = [
 ]
 
 export function checkWin(board: Cell[][], r: number, c: number, player: 1 | 2): boolean {
+  if (!Number.isInteger(r) || !Number.isInteger(c) || board[r]?.[c] !== player) return false
   for (const [dr, dc] of DIRS) {
     let count = 1
     for (const sign of [-1, 1]) {

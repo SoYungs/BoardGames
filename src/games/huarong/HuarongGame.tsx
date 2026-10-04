@@ -1,4 +1,4 @@
-import { useReducer, useState, type KeyboardEvent } from 'react'
+import { useReducer, useRef, useState, type KeyboardEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { GameResult } from '../../components/GameResult'
 import { GameStatus } from '../../components/GameStatus'
@@ -43,6 +43,7 @@ function reducer(ui: UiState, action: Action): UiState {
 export function HuarongGame() {
   const [ui, dispatch] = useReducer(reducer, undefined, () => initialUiState())
   const [selected, setSelected] = useState<string | null>(null)
+  const boardRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
   const { run } = ui
   const state = run.current
@@ -58,7 +59,11 @@ export function HuarongGame() {
       if (!occupied.has(cell)) targetCells.add(cell)
     }
   }
-  const reset = () => { dispatch({ type: 'restart' }); setSelected(null) }
+  // Direction controls can become disabled after a slide; keep Z/R available.
+  const focusBoard = () => boardRef.current?.focus({ preventScroll: true })
+  const move = (direction: Direction) => { if (selected) { focusBoard(); dispatch({ type: 'move', id: selected, direction }) } }
+  const undo = () => { focusBoard(); dispatch({ type: 'undo' }) }
+  const reset = () => { focusBoard(); dispatch({ type: 'restart' }); setSelected(null) }
 
   const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement
@@ -66,22 +71,22 @@ export function HuarongGame() {
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (KEYS[key]) {
       event.preventDefault()
-      if (selected && !event.repeat) dispatch({ type: 'move', id: selected, direction: KEYS[key] })
-    } else if (key === 'z') { event.preventDefault(); dispatch({ type: 'undo' }) }
-    else if (key === 'r') { event.preventDefault(); dispatch({ type: 'restart' }); setSelected(null) }
+      if (!event.repeat) move(KEYS[key])
+    } else if (key === 'z') { event.preventDefault(); undo() }
+    else if (key === 'r') { event.preventDefault(); reset() }
   }
 
   return (
     <div className="hr-game" onKeyDown={onKey}>
       <div className="hr-toolbar">
         <div className="hr-layout-name"><span>经典布局</span><strong>横刀立马</strong></div>
-        <div className="hr-actions"><button type="button" onClick={() => dispatch({ type: 'undo' })} disabled={run.history.length === 0}>撤销</button><button type="button" onClick={reset}>重开</button></div>
+        <div className="hr-actions"><button type="button" onClick={undo} disabled={run.history.length === 0}>撤销</button><button type="button" onClick={reset}>重开</button></div>
       </div>
       <div className="hr-stats"><span><strong>{state.moves}</strong> 步</span><span>每次滑动一格计一步</span></div>
       <GameStatus status={ui.feedback ?? (state.won ? '曹操已抵达出口，成功解围！' : selectedPiece ? `${selectedPiece.name}已选中 · ${available.length ? '按方向滑动' : '暂时动不了，换一枚棋子'}` : '先点选一枚棋子')} sideLabel="单人解谜 · 横刀立马" sideTone="dark" detail={selectedPiece ? '深绿框是选中的棋子，绿点是可移动到的空位' : '目标：把曹操移到下方中间的出口'} />
       <InteractionHint steps={['选棋子', '方向滑动', '曹操到出口']} activeStep={state.won ? 2 : selected ? 1 : 0} note="一次只滑动一格。棋子不能旋转，不能穿过其他棋子。" />
       <ResponsiveBoard width={WIDTH} height={HEIGHT}>
-        <div className="hr-board" data-puzzle-keyboard="true" tabIndex={0} style={{ width: WIDTH, height: HEIGHT }} aria-label="四列五行华容道棋盘，点选棋子后可用方向键或WASD移动">
+        <div ref={boardRef} className="hr-board" data-puzzle-keyboard="true" tabIndex={0} style={{ width: WIDTH, height: HEIGHT }} aria-label="四列五行华容道棋盘，点选棋子后可用方向键或WASD移动">
           <div className="hr-floor" aria-hidden="true" style={{ left: PAD, top: PAD, width: CELL * HUARONG_COLS, height: CELL * HUARONG_ROWS }}>
             {Array.from({ length: HUARONG_COLS * HUARONG_ROWS }, (_, index) => <span key={index} className={targetCells.has(index) ? 'hr-target-cell' : ''} style={{ width: CELL, height: CELL }} />)}
           </div>
@@ -104,7 +109,7 @@ export function HuarongGame() {
       </ResponsiveBoard>
       <div className="hr-controls">
         <div className="hr-dpad" data-puzzle-keyboard="true" role="group" aria-label="选中棋子的滑动方向">
-          {DIRECTIONS.map(({ direction, label, arrow }) => <button key={direction} className={`hr-${direction}`} type="button" aria-label={label} title={selected && !available.includes(direction) ? '这个方向暂时被挡住了' : label} disabled={!selected || !available.includes(direction)} onClick={() => selected && dispatch({ type: 'move', id: selected, direction })}><span aria-hidden="true">{arrow}</span><small>{label.slice(1, 2)}</small></button>)}
+          {DIRECTIONS.map(({ direction, label, arrow }) => <button key={direction} className={`hr-${direction}`} type="button" aria-label={label} title={selected && !available.includes(direction) ? '这个方向暂时被挡住了' : label} disabled={!selected || !available.includes(direction)} onClick={() => move(direction)}><span aria-hidden="true">{arrow}</span><small>{label.slice(1, 2)}</small></button>)}
           <span aria-hidden="true">移</span>
         </div>
         <p className="hr-keyboard">点选后，方向键 / WASD 移动<br /><kbd>Z</kbd> 撤销 · <kbd>R</kbd> 重开</p>

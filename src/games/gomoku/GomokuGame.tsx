@@ -3,7 +3,7 @@ import { GameStatus } from '../../components/GameStatus'
 import { InteractionHint } from '../../components/InteractionHint'
 import { BoardEffects } from '../../components/BoardEffects'
 import { useEffect, useState, type CSSProperties } from 'react'
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { GOMOKU_SIZE, type Cell, emptyBoard, checkWin, isBoardFull } from './gomokuLogic'
@@ -30,12 +30,13 @@ export function GomokuGame({ mode }: { mode: Mode }) {
   const reduced = useReducedMotion()
   const { board, turn, winner, lastMove, history, effect, epoch } = state
   const thinking = mode === 'ai' && turn === 2 && !winner && !aiError
+  const present = useIsPresent()
   useEffect(() => {
-    if (mode !== 'ai' || winner || turn !== 2) return
+    if (!present || mode !== 'ai' || winner || turn !== 2) return
     return scheduleAiMove('gomoku', { board, side: 2 }, move => {
       if (move) setState(current => current.turn === 2 && current.board === board ? placeStone(current, ...move) : current)
     }, 140, () => setAiError(true))
-  }, [board, mode, turn, winner])
+  }, [present, board, mode, turn, winner])
 
   const status = aiError ? '电脑计算遇到问题，请重新开始' : winner === 'draw' ? '满盘和棋' : winner ? `${winner === 1 ? '黑棋' : '白棋'} 获胜` : mode === 'ai' && turn === 2 ? '电脑思考中…' : `${turn === 1 ? '黑棋' : '白棋'} 落子`
   const reset = () => { setAiError(false); setState(current => initialState(current.epoch + 1)) }

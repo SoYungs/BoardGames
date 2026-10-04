@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { GameResult } from '../../components/GameResult'
 import { GameStatus } from '../../components/GameStatus'
 import { InteractionHint } from '../../components/InteractionHint'
@@ -37,8 +37,9 @@ export function GoGame({ mode }: { mode: Mode }) {
   const { board, turn, result, lastMove, consecutivePasses } = position
   const thinking = mode === 'ai' && turn === 2 && !result && !aiError
 
+  const present = useIsPresent()
   useEffect(() => {
-    if (mode !== 'ai' || position.result || position.turn !== 2) return
+    if (!present || mode !== 'ai' || position.result || position.turn !== 2) return
     return scheduleAiMove('go', { position, side: 2, budgetMs: 650 }, (move: GoMove | null) => {
       const played = playGoMove(position, move ?? { type: 'pass' })
       if (!played.ok) {
@@ -51,7 +52,7 @@ export function GoGame({ mode }: { mode: Mode }) {
       setSelected(null)
       setFeedback(null)
     }, 140, () => setAiError(true))
-  }, [mode, position])
+  }, [present, mode, position])
 
   const selectedGroup = useMemo(() => selected ? getGoGroup(board, selected.r, selected.c) : null, [board, selected])
   const groupSet = useMemo(() => new Set(selectedGroup?.stones.map(goPointKey) ?? []), [selectedGroup])

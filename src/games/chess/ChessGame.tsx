@@ -13,7 +13,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion, useIsPresent } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { applyMove, createInitialBoard, initialMeta, snapshotBoard, snapshotMeta } from './chessBoard'
@@ -155,8 +155,9 @@ export function ChessGame({ mode }: { mode: Mode }) {
     [board, meta, turn, mode, lastMove, winner, selected],
   )
 
+  const present = useIsPresent()
   useEffect(() => {
-    if (winner || aiError || mode !== 'ai' || turn !== aiSide) return
+    if (!present || winner || aiError || mode !== 'ai' || turn !== aiSide) return
     const { board: cur, meta: curMeta } = stateForAiRef.current
     return scheduleAiMove('chess', { board: cur, meta: curMeta, side: aiSide }, (m) => {
       if (!m) {
@@ -179,7 +180,7 @@ export function ChessGame({ mode }: { mode: Mode }) {
       }
       setTurn('white')
     }, 140, () => setAiError(true))
-  }, [winner, aiError, mode, turn, aiSide, humanSide])
+  }, [present, winner, aiError, mode, turn, aiSide, humanSide])
 
   const onCellClick = (r: number, c: number) => {
     if (winner || pendingPromotion) return

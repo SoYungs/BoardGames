@@ -1,4 +1,4 @@
-import { useReducer, type KeyboardEvent } from 'react'
+import { useReducer, useRef, type KeyboardEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { GameResult } from '../../components/GameResult'
 import { GameStatus } from '../../components/GameStatus'
@@ -45,6 +45,7 @@ function reducer(state: Session, action: Action): Session {
 
 export function SokobanGame() {
   const [game, dispatch] = useReducer(reducer, undefined, () => session())
+  const boardRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
   const { levelIndex, run } = game
   const state = run.current
@@ -56,7 +57,12 @@ export function SokobanGame() {
   const position = (cell: number) => ({ x: cell % board.width * CELL, y: Math.floor(cell / board.width) * CELL })
   const center = (cell: number) => ({ x: PAD + cell % board.width * CELL + CELL / 2, y: PAD + Math.floor(cell / board.width) * CELL + CELL / 2 })
   const transition = reduceMotion ? { duration: 0 } : { type: 'spring' as const, stiffness: 480, damping: 32 }
-  const reset = () => dispatch({ type: 'restart' })
+  // Keep keyboard input on the stable board before controls disable or disappear.
+  const focusBoard = () => boardRef.current?.focus({ preventScroll: true })
+  const move = (direction: Direction) => { focusBoard(); dispatch({ type: 'move', direction }) }
+  const undo = () => { focusBoard(); dispatch({ type: 'undo' }) }
+  const reset = () => { dispatch({ type: 'restart' }); focusBoard(); dispatch({ type: 'focus' }) }
+  const next = () => { dispatch({ type: 'next' }); focusBoard(); dispatch({ type: 'focus' }) }
   const cellDescription = (cell: number) => {
     if (board.walls.has(cell)) return '墙'
     const goal = board.goals.has(cell)
@@ -71,9 +77,9 @@ export function SokobanGame() {
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (KEYS[key]) {
       event.preventDefault()
-      if (!event.repeat) dispatch({ type: 'move', direction: KEYS[key] })
-    } else if (key === 'z') { event.preventDefault(); dispatch({ type: 'undo' }) }
-    else if (key === 'r') { event.preventDefault(); dispatch({ type: 'restart' }) }
+      if (!event.repeat) move(KEYS[key])
+    } else if (key === 'z') { event.preventDefault(); undo() }
+    else if (key === 'r') { event.preventDefault(); reset() }
   }
 
   return (
@@ -85,7 +91,7 @@ export function SokobanGame() {
           </select>
         </label>
         <div className="soko-actions">
-          <button type="button" onClick={() => dispatch({ type: 'undo' })} disabled={run.history.length === 0}>撤销</button>
+          <button type="button" onClick={undo} disabled={run.history.length === 0}>撤销</button>
           <button type="button" onClick={reset}>重开</button>
         </div>
       </div>
@@ -93,7 +99,7 @@ export function SokobanGame() {
       <GameStatus status={game.feedback ?? (state.won ? '全部箱子已归位！' : '把箱子推到金色圆圈上')} sideLabel={`第 ${levelIndex + 1} 关 · ${level.name}`} sideTone="dark" detail="金色圆圈是目标，归位后的箱子会变绿" />
       <InteractionHint steps={['点击棋盘', '方向移动', '箱子归位']} activeStep={state.won || state.moves > 0 ? 2 : game.ready ? 1 : 0} note="箱子只能推，不能拉。每次按方向只移动一格，走错了可以撤销。" />
       <ResponsiveBoard width={width} height={height}>
-        <div className="soko-board" data-puzzle-keyboard="true" tabIndex={0} onFocus={() => dispatch({ type: 'focus' })} onClick={event => event.currentTarget.focus()} style={{ width, height }} role="img" aria-label={`仓库棋盘，聚焦后可用方向键或WASD移动。玩家在${Math.floor(state.player / board.width) + 1}行${state.player % board.width + 1}列。箱子在${state.boxes.map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。目标在${[...board.goals].map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。墙体及完整地图可展开下方棋盘文字说明查看。`}>
+        <div ref={boardRef} className="soko-board" data-puzzle-keyboard="true" tabIndex={0} onFocus={() => dispatch({ type: 'focus' })} onClick={event => event.currentTarget.focus()} style={{ width, height }} role="img" aria-label={`仓库棋盘，聚焦后可用方向键或WASD移动。玩家在${Math.floor(state.player / board.width) + 1}行${state.player % board.width + 1}列。箱子在${state.boxes.map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。目标在${[...board.goals].map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。墙体及完整地图可展开下方棋盘文字说明查看。`}>
           <div className="soko-tiles" aria-hidden="true" style={{ left: PAD, top: PAD, gridTemplateColumns: `repeat(${board.width}, ${CELL}px)` }}>
             {Array.from({ length: board.width * board.height }, (_, cell) => <div key={cell} className={`soko-tile ${board.walls.has(cell) ? 'soko-wall' : 'soko-floor'} ${board.goals.has(cell) ? 'soko-target' : ''}`} style={{ width: CELL, height: CELL }}>{board.goals.has(cell) && <span />}</div>)}
           </div>
@@ -106,7 +112,7 @@ export function SokobanGame() {
       </ResponsiveBoard>
       <div className="soko-controls">
         <div className="soko-dpad" data-puzzle-keyboard="true" onFocus={() => dispatch({ type: 'focus' })} role="group" aria-label="移动方向">
-          {DIRECTIONS.map(({ direction, label, arrow }) => <button key={direction} className={`soko-${direction}`} type="button" aria-label={label} disabled={state.won} onClick={() => dispatch({ type: 'move', direction })}><span aria-hidden="true">{arrow}</span><small>{label.slice(1, 2)}</small></button>)}
+          {DIRECTIONS.map(({ direction, label, arrow }) => <button key={direction} className={`soko-${direction}`} type="button" aria-label={label} disabled={state.won} onClick={() => move(direction)}><span aria-hidden="true">{arrow}</span><small>{label.slice(1, 2)}</small></button>)}
           <span aria-hidden="true">✦</span>
         </div>
         <p className="soko-keyboard">点击棋盘后<br />方向键 / WASD 移动<br /><kbd>Z</kbd> 撤销 · <kbd>R</kbd> 重开</p>
@@ -124,7 +130,7 @@ export function SokobanGame() {
       </details>
       <GameResult result={state.won ? `第 ${levelIndex + 1} 关完成 · ${state.moves} 步 / ${state.pushes} 推` : null} onRestart={reset} restartLabel="重玩本关" eyebrow="挑战完成" />
       {state.won && (levelIndex < SOKOBAN_LEVELS.length - 1
-        ? <button type="button" className="soko-next" onClick={() => dispatch({ type: 'next' })}>下一关 <span aria-hidden="true">→</span></button>
+        ? <button type="button" className="soko-next" onClick={next}>下一关 <span aria-hidden="true">→</span></button>
         : <p className="soko-final">最后一关已完成。还可以选关，尝试用更少的步数通关。</p>)}
     </div>
   )
