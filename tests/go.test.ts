@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { pickAiMoveGo } from '../src/games/go/goAi.ts'
+import { isTrueGoEye, pickAiMoveGo } from '../src/games/go/goAi.ts'
 import { createGoPosition, emptyGoBoard, getGoGroup, getGoGroups, legalGoMoves, playGoMove, scoreGoBoard } from '../src/games/go/goLogic.ts'
 import type { GoBoard, GoMove, GoPosition, GoSide } from '../src/games/go/goTypes.ts'
 
@@ -222,4 +222,76 @@ test('AI respects its bounded budget and always supplies a legal move on an open
   assert.ok(chosen)
   assert.ok(playGoMove(position, chosen).ok)
   assert.ok(performance.now() - started < 500, 'a 40 ms search should finish promptly, with generous CI headroom')
+})
+
+test('AI preserves enclosed eyes even when their diagonals are empty', () => {
+  const position = createGoPosition()
+  position.board = Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => 1 as const))
+  for (const [r, c] of [[4, 4], [3, 3], [3, 5], [5, 3], [5, 5]]) position.board[r][c] = 0
+  assert.equal(isTrueGoEye(position.board, 4, 4, 1), true)
+  assert.deepEqual(pickAiMoveGo(position, 1, 0), { type: 'pass' })
+})
+
+test('eye detection distinguishes false diagonal eyes and useful connections between separate strings', () => {
+  const disconnected = setup([[3, 4], [5, 4], [4, 3], [4, 5]], [])
+  assert.equal(isTrueGoEye(disconnected.board, 4, 4, 1), false)
+
+  const corner = setup([[0, 1], [0, 2], [1, 2], [2, 2], [3, 2], [3, 1], [3, 0], [2, 0], [1, 0]], [[1, 1]])
+  assert.equal(isTrueGoEye(corner.board, 0, 0, 1), false)
+  assert.equal(getGoGroup(corner.board, 1, 1)?.liberties.length, 1)
+
+  const interior = createGoPosition()
+  interior.board = Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => 1 as const))
+  for (const [r, c] of [[4, 4], [2, 3], [6, 5]]) interior.board[r][c] = 0
+  interior.board[3][3] = 2
+  interior.board[5][5] = 2
+  assert.equal(isTrueGoEye(interior.board, 4, 4, 1), false)
+  const chosen = pickAiMoveGo(interior, 1, 25)
+  assert.ok(chosen)
+  assert.equal(chosen.type, 'place')
+  assert.ok(playGoMove(interior, chosen).ok)
+})
+
+test('AI avoids a losing snapback even with a minimal budget, while keeping legal ko captures', () => {
+  const trap = setup(
+    [[2, 3], [2, 4], [3, 2], [4, 3]],
+    [[3, 3], [1, 3], [1, 4], [2, 2], [2, 5], [3, 5], [4, 4]],
+  )
+  const captured = playGoMove(trap, { type: 'place', r: 3, c: 4 })
+  assert.ok(captured.ok)
+  assert.equal(captured.captured.length, 1)
+  const punished = playGoMove(captured.position, { type: 'place', r: 3, c: 3 })
+  assert.ok(punished.ok)
+  assert.equal(punished.captured.length, 3)
+  for (const budget of [0, 25, 650]) {
+    const chosen = pickAiMoveGo(trap, 1, budget)
+    assert.ok(chosen)
+    assert.notDeepEqual(chosen, { type: 'place', r: 3, c: 4 })
+    assert.ok(playGoMove(trap, chosen).ok)
+  }
+  const ko = koPosition()
+  assert.deepEqual(pickAiMoveGo(ko, 1, 25), { type: 'place', r: 3, c: 4 })
+})
+
+test('AI can rescue an atari group by capturing away from its last liberty', () => {
+  const position = setup([[4, 4], [3, 3], [3, 5]], [[3, 4], [5, 4], [4, 3]])
+  const original = structuredClone(position)
+  const chosen = pickAiMoveGo(position, 1, 25)
+  assert.ok(chosen)
+  const played = playGoMove(position, chosen)
+  assert.ok(played.ok)
+  assert.ok(getGoGroup(played.position.board, 4, 4)!.liberties.length >= 2)
+  assert.deepEqual(position, original)
+})
+
+test('an invalid numeric budget cannot disable the Go deadline', () => {
+  const position = setup([[4, 4]], [], 2)
+  const original = structuredClone(position)
+  const start = performance.now()
+  const chosen = pickAiMoveGo(position, 2, NaN)
+  assert.ok(chosen)
+  assert.ok(playGoMove(position, chosen).ok)
+  assert.deepEqual(position, original)
+  // Broad enough for shared CI CPUs; detects an accidentally unbounded search.
+  assert.ok(performance.now() - start < 1_500)
 })

@@ -1,7 +1,35 @@
-import { MATE_SCORE, searchBestMove } from '../ai/search'
+import { boundedAiBudget, MATE_SCORE, searchBestMove } from '../ai/search'
+import { immediateCaptureGain, type CaptureAdapter } from '../ai/tactics'
 import { applyMove } from './xiangqiBoard'
-import { inCheck, legalMovesFromChecked } from './xiangqiMoves'
+import { inCheck, legalMovesFromChecked, pseudoLegalMovesFrom } from './xiangqiMoves'
 import { PIECE_VALUE, type Board, type Move, type Piece, type Side } from './xiangqiTypes'
+const other = (side: Side): Side => side === 'red' ? 'black' : 'red'
+
+function* moves(position: Board, side: Side, check: () => void): Generator<Move> {
+  for (let r = 0; r < 10; r++) for (let c = 0; c < 9; c++) {
+    check()
+    if (position[r][c]?.side === side) yield* legalMovesFromChecked(position, r, c)
+  }
+}
+
+const exchanges: CaptureAdapter<Board, Move, Side> = {
+  *captures(position, side, check, target) {
+    for (let r = 0; r < 10; r++) for (let c = 0; c < 9; c++) {
+      check()
+      if (position[r][c]?.side !== side) continue
+      for (const move of pseudoLegalMovesFrom(position, r, c)) {
+        if (!position[move.toR][move.toC] || (target && (move.toR !== target[0] || move.toC !== target[1]))) continue
+        check()
+        if (!inCheck(applyMove(position, r, c, move.toR, move.toC), side)) yield move
+      }
+    }
+  },
+  apply: (position, move) => applyMove(position, move.fromR, move.fromC, move.toR, move.toC),
+  other,
+  target: move => [move.toR, move.toC],
+  attackerValue: (position, move) => PIECE_VALUE[position[move.fromR][move.fromC]!.type] * 10,
+  gain: (position, move) => PIECE_VALUE[position[move.toR][move.toC]!.type] * 10,
+}
 
 function placement(piece: Piece, r: number, c: number): number {
   const advance = piece.side === 'red' ? 9 - r : r
@@ -38,15 +66,16 @@ function evaluate(board: Board, side: Side): number {
 
 export function pickAiMoveXiangqi(board: Board, side: Side, budgetMs = 800): Move | null {
   return searchBestMove(board, side, {
-    *moves(position, turn, check) {
-      for (let r = 0; r < 10; r++) for (let c = 0; c < 9; c++) {
-        check()
-        if (position[r][c]?.side === turn) yield* legalMovesFromChecked(position, r, c)
-      }
-    },
+    moves,
     apply: (position, move) => applyMove(position, move.fromR, move.fromC, move.toR, move.toC),
-    other: turn => turn === 'red' ? 'black' : 'red',
+    other,
     evaluate,
+    fallback: (position, move, turn, check) => {
+      const next = applyMove(position, move.fromR, move.fromC, move.toR, move.toC)
+      const opponent = other(turn)
+      if (moves(next, opponent, check).next().done) return MATE_SCORE - 1
+      return evaluate(next, turn) - immediateCaptureGain(next, opponent, exchanges, check)
+    },
     order: (position, move) => {
       const piece = position[move.fromR][move.fromC]!
       const captured = position[move.toR][move.toC]
@@ -58,5 +87,5 @@ export function pickAiMoveXiangqi(board: Board, side: Side, budgetMs = 800): Mov
     terminal: (_position, _turn, ply) => -MATE_SCORE + ply,
     moveKey: move => `${move.fromR},${move.fromC},${move.toR},${move.toC}`,
     key: (position, turn) => `${turn}|${position.map(row => row.map(piece => piece ? piece.side === 'red' ? piece.type.toUpperCase() : piece.type : '.').join('')).join('')}`,
-  }, { budgetMs, maxDepth: 6, quiescenceDepth: 3 })
+  }, { budgetMs: boundedAiBudget(budgetMs, 25), maxDepth: 6, quiescenceDepth: 3 })
 }

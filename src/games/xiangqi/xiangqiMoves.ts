@@ -257,11 +257,16 @@ function movesForPiece(board: Board, r: number, c: number, piece: Piece, out: Mo
   }
 }
 
-export function legalMovesFrom(board: Board, r: number, c: number): Move[] {
+export function pseudoLegalMovesFrom(board: Board, r: number, c: number): Move[] {
   const piece = board[r][c]
   if (!piece) return []
   const raw: Move[] = []
   movesForPiece(board, r, c, piece, raw)
+  return raw
+}
+
+export function legalMovesFrom(board: Board, r: number, c: number): Move[] {
+  const raw = pseudoLegalMovesFrom(board, r, c)
   const ok: Move[] = []
   for (const m of raw) {
     const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
@@ -296,13 +301,17 @@ export function findKing(board: Board, side: Side): [number, number] | null {
 export function inCheck(board: Board, side: Side): boolean {
   const k = findKing(board, side)
   if (!k) return true
+  if (flyingGeneral(board)) return true
   const [kr, kc] = k
   const opp: Side = side === 'red' ? 'black' : 'red'
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const p = board[r][c]
       if (p?.side !== opp) continue
-      const hits = legalMovesFrom(board, r, c)
+      // Only the attack on the general matters here. Filtering every enemy
+      // destination by cloning the board made each search node very expensive.
+      const hits: Move[] = []
+      movesForPiece(board, r, c, p, hits)
       if (hits.some((m) => m.toR === kr && m.toC === kc)) return true
     }
   }
@@ -312,7 +321,7 @@ export function inCheck(board: Board, side: Side): boolean {
 export function legalMovesFromChecked(board: Board, r: number, c: number): Move[] {
   const piece = board[r][c]
   if (!piece) return []
-  return legalMovesFrom(board, r, c).filter((m) => {
+  return pseudoLegalMovesFrom(board, r, c).filter((m) => {
     const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
     return !inCheck(next, piece.side)
   })

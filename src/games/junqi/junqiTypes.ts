@@ -20,6 +20,9 @@ export interface Piece {
   side: Side
   type: PieceType
   revealed: boolean
+  /** Public movement facts; they do not expose a hidden rank. */
+  hasMoved?: boolean
+  hasTurned?: boolean
 }
 
 export type Board = (Piece | null)[][]

@@ -1,12 +1,18 @@
 import { GameResult } from '../../components/GameResult'
+import { GameStatus } from '../../components/GameStatus'
+import { BoardEffects } from '../../components/BoardEffects'
+import { InteractionHint } from '../../components/InteractionHint'
+import '../../styles/moving-games.css'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { applyShogiMove, createInitialBoard, emptyHand, snapshotBoard, snapshotHand } from './shogiBoard'
@@ -44,7 +50,22 @@ export function ShogiGame({ mode }: { mode: Mode }) {
   const [history, setHistory] = useState<ShogiSnap[]>([])
   const [promotionChoices, setPromotionChoices] = useState<Move[] | null>(null)
   const [aiError, setAiError] = useState(false)
+  const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
+  const [boardEpoch, setBoardEpoch] = useState(0)
+  const effectSequence = useRef(0)
+  const gameRef = useRef<HTMLDivElement>(null)
+  const cellRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const promotionFocus = useRef<[number, number] | null>(null)
   const reduceMotion = useReducedMotion()
+
+  useLayoutEffect(() => {
+    if (promotionChoices || !promotionFocus.current) return
+    const [r, c] = promotionFocus.current
+    promotionFocus.current = null
+    const cell = cellRefs.current[r * COLS + c]
+    const target = cell?.disabled ? gameRef.current?.querySelector<HTMLElement>('.game-status-copy') : cell
+    target?.focus({ preventScroll: true })
+  }, [promotionChoices])
 
   const humanSide: Side = 'sente'
   const aiSide: Side = 'gote'
@@ -74,16 +95,11 @@ export function ShogiGame({ mode }: { mode: Mode }) {
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     const sideLabel = turn === 'sente' ? '先手' : '后手'
     const chk = checkState.showCheckOverlay ? ' · 王手！' : ''
-    const sel =
-      selected && !selectedDrop
-        ? ` · 已选${9 - selected[1]}筋${selected[0] + 1}段，${targetSet.size} 格可走`
-        : selectedDrop
-          ? ` · 持子打入「${pieceChar({ id: '', side: turn, type: selectedDrop, promoted: false })}」`
-          : ''
-    return `${sideLabel} 行棋${chk}${sel}`
-  }, [winner, aiError, mode, turn, aiSide, checkState.showCheckOverlay, selected, selectedDrop, targetSet.size, promotionChoices])
+    return `${sideLabel} 行棋${chk}`
+  }, [winner, aiError, mode, turn, aiSide, checkState.showCheckOverlay, promotionChoices])
 
   const reset = useCallback(() => {
+    promotionFocus.current = null
     setBoard(createInitialBoard())
     setHand(emptyHand())
     setTurn('sente')
@@ -94,10 +110,13 @@ export function ShogiGame({ mode }: { mode: Mode }) {
     setHistory([])
     setPromotionChoices(null)
     setAiError(false)
+    setMoveEffect(null)
+    setBoardEpoch(epoch => epoch + 1)
   }, [])
 
   const undo = useCallback(() => {
     if (mode !== 'local' || history.length === 0) return
+    promotionFocus.current = null
     const prev = history[history.length - 1]
     setHistory((h) => h.slice(0, -1))
     setBoard(snapshotBoard(prev.board))
@@ -108,6 +127,8 @@ export function ShogiGame({ mode }: { mode: Mode }) {
     setSelected(prev.selected)
     setSelectedDrop(prev.selectedDrop)
     setPromotionChoices(null)
+    setMoveEffect(null)
+    setBoardEpoch(epoch => epoch + 1)
   }, [mode, history])
 
   const tryMove = useCallback(
@@ -138,6 +159,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
         ])
       }
       const { board: next, hand: nextHand } = applyShogiMove(board, hand, m, turn)
+      setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: board[m.toR][m.toC] ? 'capture' : m.dropType ? 'place' : 'move' })
       setLastMove(m)
       setBoard(next)
       setHand(nextHand)
@@ -167,6 +189,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
         return
       }
       const { board: next, hand: nextHand } = applyShogiMove(board, hand, m, aiSide)
+      setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: board[m.toR][m.toC] ? 'capture' : m.dropType ? 'place' : 'move' })
       setLastMove(m)
       setBoard(next)
       setHand(nextHand)
@@ -216,6 +239,23 @@ export function ShogiGame({ mode }: { mode: Mode }) {
     setSelectedDrop(selectedDrop === type ? null : type)
   }
 
+  const cancelPromotion = () => {
+    promotionFocus.current = selected
+    setPromotionChoices(null)
+  }
+
+  const confirmPromotion = (move: Move) => {
+    promotionFocus.current = [move.toR, move.toC]
+    tryMove(move)
+  }
+
+  const thinking = mode === 'ai' && turn === aiSide && !winner && !aiError
+  const selectedPiece = selected ? board[selected[0]][selected[1]] : null
+  const chosenLabel = selectedDrop ? pieceChar({ id: '', side: turn, type: selectedDrop, promoted: false }) : selectedPiece ? pieceChar(selectedPiece) : null
+  const detail = aiError ? '请点击重新开始，恢复对局' : promotionChoices ? '选择是否升变，完成这一步'
+    : chosenLabel ? `${selectedDrop ? '准备打入' : '已选'}${chosenLabel} · ${targetSet.size ? `${targetSet.size} 个落点可走` : '暂无合法落点，请重新选择'}`
+      : winner ? '本局结束，可重新开始' : thinking ? '电脑正在思考，下一步很快就来' : '先选棋子，或从持子栏选择打入的棋子'
+
   const w = PAD * 2 + CELL * (COLS - 1)
   const h = PAD * 2 + CELL * (ROWS - 1)
 
@@ -247,9 +287,9 @@ export function ShogiGame({ mode }: { mode: Mode }) {
   }
 
   return (
-    <div className="shogi-wrap">
+    <div className="shogi-wrap moving-game" ref={gameRef}>
       <div className="shogi-toolbar">
-        <p className="shogi-status" role="status" aria-live="polite" data-thinking={mode === 'ai' && turn === aiSide && !winner && !aiError}>{status}</p>
+        <GameStatus status={status} thinking={thinking} sideLabel={turn === 'sente' ? '先手' : '后手'} sideTone={turn === 'sente' ? 'dark' : 'red'} detail={detail} />
         <div className="shogi-actions">
           {mode === 'local' && (
             <button type="button" className="shogi-undo" onClick={undo} disabled={history.length === 0}>
@@ -262,21 +302,22 @@ export function ShogiGame({ mode }: { mode: Mode }) {
         </div>
       </div>
       <GameResult result={winner ? status : null} onRestart={reset} />
-      <p className="shogi-hint">
-        {mode === 'ai'
-          ? '你执先手（棋盘最下方一行）。点击己方棋子再点目标格；持子打入请先点下方「先手持子」。'
-          : '本地双人：先手在下方。点击己方棋子选中，再点绿色高亮格走子。'}
-      </p>
+      <InteractionHint steps={['选棋子或持子', '查看落点', '走子或打入']} activeStep={promotionChoices ? 2 : selected || selectedDrop ? 1 : 0} note={winner ? '本局结束。可重新开始，或在双人模式悔棋复盘。' : checkState.showCheckOverlay ? '正在被王手：先保护你的玉。' : selectedDrop ? '绿点是这枚持子可以打入的空位；再点持子可取消。' : '绿点可走，金圈可吃；吃下的棋子会进入持子栏。'} />
       {promotionChoices && (
-        <div className="shogi-promotion" role="group" aria-label="选择是否升变">
+        <div className="shogi-promotion" role="group" aria-label="选择是否升变" onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            cancelPromotion()
+          }
+        }}>
           <p>进入或离开敌阵，可以将棋子升变。</p>
-          <button type="button" className="shogi-reset" autoFocus onClick={() => tryMove(promotionChoices.find((m) => m.promote === true)!)}>
+          <button type="button" className="shogi-reset" autoFocus onClick={() => confirmPromotion(promotionChoices.find((m) => m.promote === true)!)}>
             升变
           </button>
-          <button type="button" className="shogi-undo" onClick={() => tryMove(promotionChoices.find((m) => m.promote === false)!)}>
+          <button type="button" className="shogi-undo" onClick={() => confirmPromotion(promotionChoices.find((m) => m.promote === false)!)}>
             不升
           </button>
-          <button type="button" className="shogi-undo" onClick={() => setPromotionChoices(null)}>
+          <button type="button" className="shogi-undo" onClick={cancelPromotion}>
             取消
           </button>
         </div>
@@ -296,6 +337,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
               王手
             </div>
           )}
+          <BoardEffects key={boardEpoch} width={w} height={h} eventKey={moveEffect?.eventKey ?? ''} from={moveEffect && moveEffect.move.fromR !== undefined && moveEffect.move.fromC !== undefined ? { x: PAD + moveEffect.move.fromC * CELL, y: PAD + moveEffect.move.fromR * CELL } : undefined} to={moveEffect ? { x: PAD + moveEffect.move.toC * CELL, y: PAD + moveEffect.move.toR * CELL } : undefined} kind={moveEffect?.kind} />
           <svg className="shogi-svg" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
             <rect x={0} y={0} width={w} height={h} className="shogi-bg" rx={8} />
             {Array.from({ length: ROWS }, (_, j) => (
@@ -329,6 +371,7 @@ export function ShogiGame({ mode }: { mode: Mode }) {
               Array.from({ length: COLS }, (_, c) => {
                 const isSel = selected?.[0] === r && selected?.[1] === c
                 const isTarget = targetSet.has(`${r},${c}`)
+                const isCapture = isTarget && !!board[r][c]
                 const isLastFrom = lastMove?.fromR === r && lastMove?.fromC === c
                 const isLastTo = lastMove?.toR === r && lastMove?.toC === c
                 const piece = board[r][c]
@@ -336,39 +379,41 @@ export function ShogiGame({ mode }: { mode: Mode }) {
                 return (
                   <button
                     key={`hit-${r}-${c}`}
+                    ref={(cell) => { cellRefs.current[r * COLS + c] = cell }}
                     type="button"
-                    aria-label={`${9 - c}筋${r + 1}段，${label}${isTarget ? '，可走' : ''}`}
+                    aria-label={`${9 - c}筋${r + 1}段，${label}${isTarget ? isCapture ? '，可吃子' : selectedDrop ? '，可打入' : '，可走空位' : ''}`}
                     aria-pressed={isSel}
                     disabled={winner !== null || promotionChoices !== null || (mode === 'ai' && turn === aiSide)}
                     onClick={() => onCellClick(r, c)}
-                    className={`shogi-hit ${isSel ? 'selected' : ''} ${isTarget ? 'target' : ''} ${isLastFrom ? 'last-from' : ''} ${isLastTo ? 'last-to' : ''}`}
+                    className={`shogi-hit ${isSel ? 'selected' : ''} ${isTarget ? 'target' : ''} ${isCapture ? 'capture-target' : ''} ${isLastFrom ? 'last-from' : ''} ${isLastTo ? 'last-to' : ''}`}
                     style={{
                       left: PAD + c * CELL - 20,
                       top: PAD + r * CELL - 20,
                     }}
-                  />
+                  >{isTarget && <span aria-hidden="true" className={`move-target-marker ${isCapture ? 'move-target-marker--capture' : ''}`} />}</button>
                 )
               }),
             )}
+            <AnimatePresence key={boardEpoch} initial={false}>
             {board.flatMap((row, r) =>
               row.map((piece, c) =>
                 piece ? (
                   <motion.div
                     key={piece.id}
                     aria-hidden="true"
-                    className={`shogi-piece shogi-piece--${piece.side}${piece.promoted ? ' promoted' : ''}`}
-                    initial={false}
-                    animate={{
-                      left: PAD + c * CELL - 20,
-                      top: PAD + r * CELL - 20,
-                    }}
-                    transition={{ duration: reduceMotion ? 0 : 0.22, ease: 'easeOut' }}
+                    className={`moving-piece ${lastMove?.toR === r && lastMove?.toC === c ? 'moving-piece--last' : ''}`}
+                    style={{ width: 40, height: 40 }}
+                    initial={reduceMotion ? false : { x: PAD + c * CELL - 20, y: PAD + r * CELL - 20, scale: .72, opacity: 0 }}
+                    animate={{ x: PAD + c * CELL - 20, y: PAD + r * CELL - 20, scale: 1, opacity: 1 }}
+                    exit={{ scale: .55, opacity: 0 }}
+                    transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 31, mass: .85 }}
                   >
-                    {pieceChar(piece)}
+                    <div className={`shogi-piece shogi-piece--${piece.side}${piece.promoted ? ' promoted' : ''}`}><svg className="shogi-piece-plaque" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 1 33 9 38 38H2L7 9Z" /><path className="shogi-piece-inset" d="m20 4 10 7 5 24H5l5-24Z" /></svg><span>{pieceChar(piece)}</span></div>
                   </motion.div>
                 ) : null,
               ),
             )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -392,6 +437,7 @@ function ShogiHandPieces(props: {
   const { types, counts, side, turn, selectedDrop, winner, mode, aiSide, onHandClick } = props
   return (
     <div className="shogi-hand-pieces">
+      {counts.size === 0 && <span className="shogi-hand-empty">暂无持子</span>}
       {types.map((type) => {
         const n = counts.get(type) ?? 0
         if (n === 0) return null

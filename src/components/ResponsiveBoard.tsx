@@ -8,6 +8,8 @@ export function ResponsiveBoard({ width, height, children }: { width: number; he
   useLayoutEffect(() => {
     const element = container.current
     if (!element) return
+    // Measure before first paint; narrow screens should never flash a full-size board.
+    setScale(Math.min(1, element.getBoundingClientRect().width / width))
     const observer = new ResizeObserver(([entry]) => {
       setScale(Math.min(1, entry.contentRect.width / width))
     })

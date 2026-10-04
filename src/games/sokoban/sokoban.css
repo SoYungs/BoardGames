@@ -20,18 +20,26 @@
 .soko-wall::before { content: ''; position: absolute; top: 48%; left: 3px; right: 3px; height: 1px; background: #272e2a66; }
 .soko-wall::after { content: ''; position: absolute; top: 0; bottom: 48%; left: 40%; width: 1px; background: #272e2a66; }
 .soko-target { background: #3f493b; }
-.soko-target > span { position: absolute; inset: 11px; border: 2px dashed #cad09fbb; border-radius: 50%; box-shadow: inset 0 0 0 5px #c8cf9820; }
+.soko-target > span { position: absolute; inset: 11px; border: 2px dashed #ddbd83; border-radius: 50%; box-shadow: inset 0 0 0 5px #d3b67820; }
 .soko-box { position: absolute; z-index: 3; box-sizing: border-box; border: 2px solid #6c4e2f; border-radius: 5px; background: linear-gradient(145deg, #cfad76, #ac8654); box-shadow: inset 0 2px 0 #ead4a5, 0 3px 5px #0004; }
 .soko-box span, .soko-box i { position: absolute; inset: 4px; border: 1px solid #825c36; border-radius: 2px; }
 .soko-box i { inset: 3px 15px; border: 0; background: #8d673866; transform: rotate(45deg); }
 .soko-box-placed { border-color: #638360; background: linear-gradient(145deg, #bbd4a4, #7fa175); box-shadow: inset 0 2px 0 #d5e6c4, 0 3px 5px #0004; }
 .soko-box-placed span { border-color: #527350; }
 .soko-box-placed i { background: #63845b77; }
+.soko-box-placed::after { content: ''; position: absolute; inset: 9px; border: 2px solid #dfc28a; border-radius: 50%; box-shadow: 0 0 0 1px #56754b55; }
+.soko-box, .soko-player { will-change: transform; }
+.soko-board .board-effects { z-index: 6; }
+.soko-board .board-effects--place { color: #dfbd7d; }
+.soko-game .game-status { margin: 0 0 15px; }
+.soko-game .interaction-hint { margin: 0 0 18px; }
 .soko-player { position: absolute; z-index: 4; display: grid; place-items: center; color: #e8ead4; border-radius: 50%; background: #4b8179; border: 2px solid #8fb6a1; box-sizing: border-box; box-shadow: 0 3px 6px #0005; }
 .soko-controls { display: flex; align-items: center; justify-content: center; gap: 22px; margin-top: 24px; }
-.soko-dpad { display: grid; grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(2, 46px); gap: 5px; }
+.soko-dpad { display: grid; grid-template-columns: repeat(3, 58px); grid-template-rows: repeat(2, 56px); gap: 6px; }
 .soko-dpad button { padding: 0; border: 1px solid #626e60; border-radius: 8px; background: #344238; color: #dce6d0; font-size: 1.2rem; line-height: 1; box-shadow: 0 2px 0 #17251c; }
 .soko-dpad button:hover:not(:disabled) { background: #475b48; border-color: #95aa86; }
+.soko-dpad button { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; }
+.soko-dpad button small { font-size: 10px; line-height: 1; opacity: .8; }
 .soko-up { grid-area: 1 / 2; }.soko-left { grid-area: 2 / 1; }.soko-down { grid-area: 2 / 2; }.soko-right { grid-area: 2 / 3; }
 .soko-dpad > span { grid-area: 1 / 1; display: grid; place-items: center; color: #7b9374; }
 .soko-keyboard { color: var(--muted); font-size: .72rem; line-height: 2; }
@@ -51,3 +59,4 @@
 .soko-next span { float: right; }.soko-next:hover { background: #506b48; }
 .soko-final { color: var(--muted); font-size: .75rem; line-height: 1.6; }
 @media (max-width: 440px) { .soko-controls { flex-direction: column; gap: 6px; }.soko-keyboard { text-align: center; font-size: .68rem; margin: 7px 0 0; }.soko-stats { gap: 5px; }.soko-stats > span { padding: 6px 7px; }.soko-level-label { gap: 7px; }.soko-level-label select { max-width: 170px; }.soko-toolbar { gap: 9px; } }
+@media (prefers-reduced-motion: reduce) { .soko-game *, .soko-game *::before, .soko-game *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

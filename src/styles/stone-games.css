@@ -1,0 +1,8 @@
+.gomoku-board { position: relative; }
+.gomoku-board .board-effects { z-index: 5; }
+.gomoku-wrap .gomoku-toolbar { align-items: center; gap: 14px; }
+.gomoku-wrap .gomoku-hint { font-size: 11px; line-height: 1.8; }
+.gomoku-wrap .gomoku-cell.last-move::after { inset: 22%; border-width: 1.5px; border-radius: 50%; z-index: 3; pointer-events: none; }
+.gomoku-wrap .gomoku-stone { will-change: transform; }
+.gomoku-wrap .interaction-hint { margin-bottom: 18px; }
+@media (prefers-reduced-motion: reduce) { .gomoku-wrap *, .gomoku-wrap *::before, .gomoku-wrap *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

@@ -1,6 +1,9 @@
 import { useReducer, type KeyboardEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { GameResult } from '../../components/GameResult'
+import { GameStatus } from '../../components/GameStatus'
+import { InteractionHint } from '../../components/InteractionHint'
+import { BoardEffects } from '../../components/BoardEffects'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { SOKOBAN_LEVELS } from './sokobanLevels'
 import { moveSokobanRun, parseSokobanLevel, startSokoban, undoSokoban } from './sokobanLogic'
@@ -17,16 +20,27 @@ const DIRECTIONS: { direction: Direction; label: string; arrow: string }[] = [
   { direction: 'right', label: '向右移动', arrow: '→' },
 ]
 const KEYS: Record<string, Direction> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right' }
-type Session = { levelIndex: number; run: SokobanRun }
-type Action = { type: 'move'; direction: Direction } | { type: 'select'; levelIndex: number } | { type: 'undo' } | { type: 'restart' } | { type: 'next' }
+type Session = { levelIndex: number; run: SokobanRun; feedback: string | null; effect: { from: number; to: number; key: number; goal: boolean } | null; epoch: number; revision: number; ready: boolean }
+type Action = { type: 'move'; direction: Direction } | { type: 'select'; levelIndex: number } | { type: 'undo' } | { type: 'restart' } | { type: 'next' } | { type: 'focus' }
 
-function session(levelIndex = 0): Session { return { levelIndex, run: startSokoban(BOARDS[levelIndex]) } }
+function session(levelIndex = 0, epoch = 0, revision = 0): Session { return { levelIndex, run: startSokoban(BOARDS[levelIndex]), feedback: null, effect: null, epoch, revision, ready: false } }
 function reducer(state: Session, action: Action): Session {
-  if (action.type === 'select') return session(action.levelIndex)
-  if (action.type === 'restart') return session(state.levelIndex)
-  if (action.type === 'next') return state.run.current.won && state.levelIndex < BOARDS.length - 1 ? session(state.levelIndex + 1) : state
-  const run = action.type === 'undo' ? undoSokoban(state.run) : moveSokobanRun(BOARDS[state.levelIndex], state.run, action.direction)
-  return run === state.run ? state : { ...state, run }
+  if (action.type === 'focus') return state.ready ? state : { ...state, ready: true }
+  if (action.type === 'select') return session(action.levelIndex, state.epoch + 1, state.revision + 1)
+  if (action.type === 'restart') return session(state.levelIndex, state.epoch + 1, state.revision + 1)
+  if (action.type === 'next') return state.run.current.won && state.levelIndex < BOARDS.length - 1 ? session(state.levelIndex + 1, state.epoch + 1, state.revision + 1) : state
+  if (action.type === 'undo') {
+    const run = undoSokoban(state.run)
+    return { ...state, run, feedback: run === state.run ? '还没有可以撤销的走步。' : null, effect: null, epoch: state.epoch + 1 }
+  }
+  const board = BOARDS[state.levelIndex]
+  const run = moveSokobanRun(board, state.run, action.direction)
+  if (run === state.run) return { ...state, feedback: run.current.won ? '这关已完成，可以选择下一关。' : '这个方向被挡住了，换个方向试试。', effect: null }
+  const pushed = run.current.boxes.findIndex((cell, index) => cell !== state.run.current.boxes[index])
+  const from = pushed < 0 ? state.run.current.player : state.run.current.boxes[pushed]
+  const to = pushed < 0 ? run.current.player : run.current.boxes[pushed]
+  const revision = state.revision + 1
+  return { ...state, run, feedback: null, ready: true, revision, effect: { from, to, key: revision, goal: pushed >= 0 && board.goals.has(to) } }
 }
 
 export function SokobanGame() {
@@ -39,7 +53,8 @@ export function SokobanGame() {
   const placed = state.boxes.filter(position => board.goals.has(position)).length
   const width = board.width * CELL + PAD * 2
   const height = board.height * CELL + PAD * 2
-  const position = (cell: number) => ({ left: PAD + cell % board.width * CELL + 5, top: PAD + Math.floor(cell / board.width) * CELL + 5 })
+  const position = (cell: number) => ({ x: cell % board.width * CELL, y: Math.floor(cell / board.width) * CELL })
+  const center = (cell: number) => ({ x: PAD + cell % board.width * CELL + CELL / 2, y: PAD + Math.floor(cell / board.width) * CELL + CELL / 2 })
   const transition = reduceMotion ? { duration: 0 } : { type: 'spring' as const, stiffness: 480, damping: 32 }
   const reset = () => dispatch({ type: 'restart' })
   const cellDescription = (cell: number) => {
@@ -75,21 +90,23 @@ export function SokobanGame() {
         </div>
       </div>
       <div className="soko-stats"><span><strong>{state.moves}</strong> 步</span><span><strong>{state.pushes}</strong> 推</span><span className="soko-goals"><strong>{placed}/{board.goals.size}</strong> 箱归位</span></div>
-      <p className="soko-status" role="status" aria-live="polite">{state.won ? '全部箱子已归位，关卡完成！' : `第 ${levelIndex + 1} 关 · ${level.name}`}</p>
+      <GameStatus status={game.feedback ?? (state.won ? '全部箱子已归位！' : '把箱子推到金色圆圈上')} sideLabel={`第 ${levelIndex + 1} 关 · ${level.name}`} sideTone="dark" detail="金色圆圈是目标，归位后的箱子会变绿" />
+      <InteractionHint steps={['点击棋盘', '方向移动', '箱子归位']} activeStep={state.won || state.moves > 0 ? 2 : game.ready ? 1 : 0} note="箱子只能推，不能拉。每次按方向只移动一格，走错了可以撤销。" />
       <ResponsiveBoard width={width} height={height}>
-        <div className="soko-board" data-puzzle-keyboard="true" tabIndex={0} onClick={event => event.currentTarget.focus()} style={{ width, height }} role="img" aria-label={`仓库棋盘，聚焦后可用方向键或WASD移动。玩家在${Math.floor(state.player / board.width) + 1}行${state.player % board.width + 1}列。箱子在${state.boxes.map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。目标在${[...board.goals].map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。墙体及完整地图可展开下方棋盘文字说明查看。`}>
+        <div className="soko-board" data-puzzle-keyboard="true" tabIndex={0} onFocus={() => dispatch({ type: 'focus' })} onClick={event => event.currentTarget.focus()} style={{ width, height }} role="img" aria-label={`仓库棋盘，聚焦后可用方向键或WASD移动。玩家在${Math.floor(state.player / board.width) + 1}行${state.player % board.width + 1}列。箱子在${state.boxes.map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。目标在${[...board.goals].map(cell => `${Math.floor(cell / board.width) + 1}行${cell % board.width + 1}列`).join('、')}。墙体及完整地图可展开下方棋盘文字说明查看。`}>
           <div className="soko-tiles" aria-hidden="true" style={{ left: PAD, top: PAD, gridTemplateColumns: `repeat(${board.width}, ${CELL}px)` }}>
             {Array.from({ length: board.width * board.height }, (_, cell) => <div key={cell} className={`soko-tile ${board.walls.has(cell) ? 'soko-wall' : 'soko-floor'} ${board.goals.has(cell) ? 'soko-target' : ''}`} style={{ width: CELL, height: CELL }}>{board.goals.has(cell) && <span />}</div>)}
           </div>
-          {state.boxes.map((cell, index) => <motion.div key={`box-${index}`} className={`soko-box ${board.goals.has(cell) ? 'soko-box-placed' : ''}`} aria-hidden="true" initial={false} animate={position(cell)} transition={transition} style={{ width: CELL - 10, height: CELL - 10 }}><span /><i /></motion.div>)}
-          <motion.div className="soko-player" aria-hidden="true" initial={false} animate={position(state.player)} transition={transition} style={{ width: CELL - 10, height: CELL - 10 }}>
+          {state.boxes.map((cell, index) => <motion.div key={`box-${index}`} className={`soko-box ${board.goals.has(cell) ? 'soko-box-placed' : ''}`} aria-hidden="true" initial={false} animate={position(cell)} transition={game.effect ? transition : { duration: 0 }} style={{ left: PAD + 5, top: PAD + 5, width: CELL - 10, height: CELL - 10 }}><span /><i /></motion.div>)}
+          <motion.div className="soko-player" aria-hidden="true" initial={false} animate={position(state.player)} transition={game.effect ? transition : { duration: 0 }} style={{ left: PAD + 5, top: PAD + 5, width: CELL - 10, height: CELL - 10 }}>
             <svg width="30" height="32" viewBox="0 0 30 32" fill="none"><circle cx="15" cy="9" r="6" fill="currentColor" /><path d="M5 27c0-7 4-11 10-11s10 4 10 11H5Z" fill="currentColor" /><path d="M9 7h12" stroke="#335653" strokeWidth="3" strokeLinecap="round" /></svg>
           </motion.div>
+          <BoardEffects key={game.epoch} width={width} height={height} from={game.effect ? center(game.effect.from) : undefined} to={game.effect ? center(game.effect.to) : undefined} eventKey={game.effect?.key ?? ''} kind={game.effect?.goal ? 'place' : 'move'} />
         </div>
       </ResponsiveBoard>
       <div className="soko-controls">
-        <div className="soko-dpad" data-puzzle-keyboard="true" role="group" aria-label="移动方向">
-          {DIRECTIONS.map(({ direction, label, arrow }) => <button key={direction} className={`soko-${direction}`} type="button" aria-label={label} disabled={state.won} onClick={() => dispatch({ type: 'move', direction })}>{arrow}</button>)}
+        <div className="soko-dpad" data-puzzle-keyboard="true" onFocus={() => dispatch({ type: 'focus' })} role="group" aria-label="移动方向">
+          {DIRECTIONS.map(({ direction, label, arrow }) => <button key={direction} className={`soko-${direction}`} type="button" aria-label={label} disabled={state.won} onClick={() => dispatch({ type: 'move', direction })}><span aria-hidden="true">{arrow}</span><small>{label.slice(1, 2)}</small></button>)}
           <span aria-hidden="true">✦</span>
         </div>
         <p className="soko-keyboard">点击棋盘后<br />方向键 / WASD 移动<br /><kbd>Z</kbd> 撤销 · <kbd>R</kbd> 重开</p>
@@ -105,7 +122,7 @@ export function SokobanGame() {
           </li>)}
         </ol>
       </details>
-      <GameResult result={state.won ? `第 ${levelIndex + 1} 关完成 · ${state.moves} 步 / ${state.pushes} 推` : null} onRestart={reset} />
+      <GameResult result={state.won ? `第 ${levelIndex + 1} 关完成 · ${state.moves} 步 / ${state.pushes} 推` : null} onRestart={reset} restartLabel="重玩本关" eyebrow="挑战完成" />
       {state.won && (levelIndex < SOKOBAN_LEVELS.length - 1
         ? <button type="button" className="soko-next" onClick={() => dispatch({ type: 'next' })}>下一关 <span aria-hidden="true">→</span></button>
         : <p className="soko-final">最后一关已完成。还可以选关，尝试用更少的步数通关。</p>)}

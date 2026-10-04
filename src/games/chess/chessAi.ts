@@ -1,10 +1,45 @@
-import { MATE_SCORE, searchBestMove } from '../ai/search'
+import { boundedAiBudget, MATE_SCORE, searchBestMove } from '../ai/search'
+import { immediateCaptureGain, type CaptureAdapter } from '../ai/tactics'
 import { applyMove } from './chessBoard'
-import { inCheck, legalMovesFromChecked } from './chessMoves'
+import { inCheck, legalMovesFrom, legalMovesFromChecked } from './chessMoves'
 import { PIECE_VALUE, type Board, type GameMeta, type Move, type Piece, type Side } from './chessTypes'
 
 type Position = { board: Board; meta: GameMeta }
 const value = (piece: Piece) => PIECE_VALUE[piece.type] * 10
+const other = (side: Side): Side => side === 'white' ? 'black' : 'white'
+
+function* moves(position: Position, side: Side, check: () => void): Generator<Move> {
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    check()
+    if (position.board[r][c]?.side === side) yield* legalMovesFromChecked(position.board, position.meta, r, c)
+  }
+}
+
+const exchanges: CaptureAdapter<Position, Move, Side> = {
+  *captures(position, side, check, target) {
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      check()
+      const piece = position.board[r][c]
+      if (piece?.side !== side) continue
+      for (const move of legalMovesFrom(position.board, position.meta, r, c)) {
+        if (target && (move.toR !== target[0] || move.toC !== target[1])) continue
+        const victim = position.board[move.toR][move.toC]
+        const ep = piece.type === 'p' && position.meta.enPassant?.[0] === move.toR && position.meta.enPassant[1] === move.toC
+        if ((!victim && !ep) || victim?.type === 'k') continue
+        check()
+        if (!inCheck(applyMove(position.board, position.meta, move).board, side)) yield move
+      }
+    }
+  },
+  apply: (position, move) => applyMove(position.board, position.meta, move),
+  other,
+  target: move => [move.toR, move.toC],
+  attackerValue: (position, move) => value(position.board[move.fromR][move.fromC]!),
+  gain: (position, move) => {
+    const victim = position.board[move.toR][move.toC]
+    return (victim ? value(victim) : 100) + (move.promotion ? PIECE_VALUE[move.promotion] * 10 - 100 : 0)
+  },
+}
 
 function placement(piece: Piece, r: number, c: number, endgame: boolean): number {
   const advance = piece.side === 'white' ? 7 - r : r
@@ -68,20 +103,21 @@ function order({ board, meta }: Position, move: Move): number {
 
 export function pickAiMoveChess(board: Board, meta: GameMeta, side: Side, budgetMs = 800): Move | null {
   return searchBestMove({ board, meta }, side, {
-    *moves(position, turn, check) {
-      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
-        check()
-        if (position.board[r][c]?.side === turn) yield* legalMovesFromChecked(position.board, position.meta, r, c)
-      }
-    },
+    moves,
     apply: (position, move) => applyMove(position.board, position.meta, move),
-    other: turn => turn === 'white' ? 'black' : 'white',
+    other,
     evaluate, order,
+    fallback: (position, move, turn, check) => {
+      const next = applyMove(position.board, position.meta, move)
+      const opponent = other(turn)
+      if (moves(next, opponent, check).next().done) return inCheck(next.board, opponent) ? MATE_SCORE - 1 : 0
+      return evaluate(next, turn) - immediateCaptureGain(next, opponent, exchanges, check)
+    },
     tactical: (position, move) => !!position.board[move.toR][move.toC] || !!move.promotion
       || (position.board[move.fromR][move.fromC]?.type === 'p' && position.meta.enPassant?.[0] === move.toR && position.meta.enPassant[1] === move.toC),
     inCheck: (position, turn) => inCheck(position.board, turn),
     terminal: (position, turn, ply) => inCheck(position.board, turn) ? -MATE_SCORE + ply : 0,
     moveKey: move => `${move.fromR},${move.fromC},${move.toR},${move.toC},${move.promotion ?? ''},${move.castle ?? ''}`,
     key: (position, turn) => `${turn}|${position.board.map(row => row.map(piece => piece ? piece.side === 'white' ? piece.type.toUpperCase() : piece.type : '.').join('')).join('')}|${JSON.stringify(position.meta)}`,
-  }, { budgetMs, maxDepth: 6, quiescenceDepth: 3 })
+  }, { budgetMs: boundedAiBudget(budgetMs, 25), maxDepth: 6, quiescenceDepth: 3 })
 }

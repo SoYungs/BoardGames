@@ -1,12 +1,12 @@
 :root {
   color-scheme: light;
-  --bg-deep: #f6f5ef;
-  --bg-panel: #fffef9;
+  --bg-deep: #f5f4e9;
+  --bg-panel: #fffef6;
   --bg-elevated: #eef0e7;
   --stroke: #dcdfd4;
   --text: #263d32;
   --muted: #718075;
-  --accent: #315d49;
+  --accent: #2d5b43;
   --accent-dim: #315d4910;
   --danger: #a54b3b;
   --font-sans: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;

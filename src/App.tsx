@@ -1,6 +1,6 @@
 import { HashRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { AnimatePresence, MotionConfig, motion } from 'framer-motion'
-import { useEffect } from 'react'
+import { AnimatePresence, MotionConfig, motion, useIsPresent, useReducedMotion } from 'framer-motion'
+import type { ReactNode } from 'react'
 import { BrandMark } from './components/Icons'
 import { RouteErrorBoundary } from './RouteErrorBoundary'
 import { HomePage } from './pages/HomePage'
@@ -13,17 +13,23 @@ import { JunqiPlayPage } from './pages/JunqiPlayPage'
 import { GoPlayPage } from './pages/GoPlayPage'
 import { SokobanPlayPage } from './pages/SokobanPlayPage'
 import { HuarongPlayPage } from './pages/HuarongPlayPage'
+import './styles/feedback.css'
 
 /**
  * Hash 路由的路径来自 `#` 之后（如 `/#/xiangqi`），与 `import.meta.env.BASE_URL`（如 `/BoardGames/`）无关。
  * 若把仓库 base 当作 basename，则 `stripBasename('/', '/BoardGames')` 为 null，**所有路由失配 → 黑屏**。
  */
+function RouteStage({ children }: { children: ReactNode }) {
+  const present = useIsPresent()
+  const reduceMotion = useReducedMotion()
+  return <motion.div className="route-stage" inert={!present} aria-hidden={!present ? true : undefined} initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: reduceMotion ? 0 : .2, ease: [.22, 1, .36, 1] }}>{children}</motion.div>
+}
+
 function AppRoutes() {
   const location = useLocation()
-  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }) }, [location.pathname])
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.div className="route-stage" key={location.pathname} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: .18 }}>
+    <AnimatePresence mode="wait" initial={false} onExitComplete={() => window.scrollTo({ top: 0, behavior: 'instant' })}>
+      <RouteStage key={location.pathname}>
           <Routes location={location}>
             <Route path="/" element={<HomePage />} />
             <Route path="/gomoku" element={<ModeSelectPage game="gomoku" />} />
@@ -42,7 +48,7 @@ function AppRoutes() {
             <Route path="/huarong" element={<HuarongPlayPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-      </motion.div>
+      </RouteStage>
     </AnimatePresence>
   )
 }

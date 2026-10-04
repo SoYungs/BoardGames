@@ -1,4 +1,5 @@
 import { GOMOKU_SIZE, checkWin, type Cell } from './gomokuLogic'
+import { boundedAiBudget } from '../ai/search'
 
 type Point = [number, number]
 const DIRECTIONS = [[1, 0], [0, 1], [1, 1], [1, -1]]
@@ -32,7 +33,7 @@ function completions(line: string[]): Set<number> {
   return points
 }
 
-function pointScore(board: Cell[][], r: number, c: number, side: 1 | 2): number {
+function pointScore(board: Cell[][], r: number, c: number, side: 1 | 2, extended = true): number {
   let score = 0, fours = 0, threes = 0
   for (const [dr, dc] of DIRECTIONS) {
     const line = Array.from({ length: 9 }, (_, i) => {
@@ -44,7 +45,7 @@ function pointScore(board: Cell[][], r: number, c: number, side: 1 | 2): number 
     if (wins.size >= 2) { score += 70_000; fours++; continue }
     if (wins.size) { score += 9_000; fours++; continue }
     let openThree = false
-    for (let i = 0; i < 9; i++) if (line[i] === '.') {
+    for (let i = 0; extended && i < 9; i++) if (line[i] === '.') {
       line[i] = 'X'
       if (completions(line).size >= 2) openThree = true
       line[i] = '.'
@@ -81,7 +82,7 @@ export function evaluateBoard(board: Cell[][], side: 1 | 2): number {
 }
 
 export function pickAiMove(source: Cell[][], side: 1 | 2, budgetMs = 800): Point | null {
-  const deadline = performance.now() + Math.min(900, Math.max(0, budgetMs))
+  const deadline = performance.now() + boundedAiBudget(budgetMs)
   const check = () => { if (performance.now() >= deadline) throw TIMEOUT }
   const board = source.map(row => row.slice())
   const initial = getCandidates(board)
@@ -97,7 +98,12 @@ export function pickAiMove(source: Cell[][], side: 1 | 2, budgetMs = 800): Point
   if (wins.length) return wins[0]
   const forced = immediate(initial, opponent)
   if (forced.length === 1) return forced[0]
-  let best: Point = initial.sort((a, b) => Math.abs(a[0] - 7) + Math.abs(a[1] - 7) - Math.abs(b[0] - 7) - Math.abs(b[1] - 7))[0]
+  // This inexpensive full-board tactical pass is also the timeout fallback.
+  // Returning the nearest central square used to ignore a distant open three
+  // when deeper pattern ranking ran out of its remaining budget.
+  const baseline = initial.map(point => ({ point, score: pointScore(board, ...point, side, false) + pointScore(board, ...point, opponent, false) * .95 }))
+  baseline.sort((a, b) => b.score - a.score)
+  let best: Point = baseline[0].point
 
   const ordered = (turn: 1 | 2, limit: number): Point[] => {
     const points = getCandidates(board)

@@ -233,6 +233,7 @@ export function legalMovesFromChecked(board: Board, meta: GameMeta, r: number, c
   const piece = board[r][c]
   if (!piece) return []
   return legalMovesFrom(board, meta, r, c).filter((m) => {
+    if (board[m.toR][m.toC]?.type === 'k') return false
     const { board: next } = applyMove(board, meta, m)
     return !inCheck(next, piece.side)
   })

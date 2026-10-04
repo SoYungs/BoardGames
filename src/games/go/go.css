@@ -26,13 +26,17 @@
 .go-point { position: absolute; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 7px; background: transparent; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .go-point:focus-visible { outline: 2px solid #6a8263; outline-offset: -3px; background: #f5f0d94d; }
 .go-point:disabled { cursor: default; }
-.go-point--selected { box-shadow: inset 0 0 0 2px #658b5670; }
+.go-point--selected { box-shadow: inset 0 0 0 2px #315d49; background: #527a4630; }
 .go-stone { position: absolute; z-index: 2; display: flex; align-items: center; justify-content: center; width: 37px; height: 37px; border-radius: 50%; pointer-events: none; box-shadow: 1px 3px 4px #4d3e2b55, inset 0 -2px 2px #00000010; }
 .go-stone--1 { background: radial-gradient(circle at 32% 24%, #626660 0%, #242923 36%, #10140e 100%); border: 1px solid #20261f; }
 .go-stone--2 { background: radial-gradient(circle at 32% 24%, #fff 0%, #f5f4ed 48%, #dedccf 100%); border: 1px solid #d3ccba; }
+.go-stone { will-change: transform; }
+.go-board-surface .board-effects { z-index: 5; }
+.go-wrap .interaction-hint { margin: 0 0 18px; }
+.go-toolbar .game-status { flex: 1; min-width: 210px; }
 .go-last-mark { width: 9px; height: 9px; border: 1.5px solid #d6a963; border-radius: 50%; }
 .go-stone--2 .go-last-mark { border-color: #9b7743; }
-.go-liberty { position: absolute; z-index: 1; width: 10px; height: 10px; border-radius: 50%; background: #6c925dbf; box-shadow: 0 0 0 3px #ebf3d999; pointer-events: none; }
+.go-liberty { position: absolute; z-index: 1; width: 11px; height: 11px; border-radius: 50%; background: #386742; box-shadow: 0 0 0 4px #e4ecd5b3, 0 1px 3px #21482b22; pointer-events: none; }
 .go-territory { width: 10px; height: 10px; border-radius: 2px; pointer-events: none; }
 .go-territory--1 { background: #27322499; }
 .go-territory--2 { background: #fff9e5; border: 1px solid #c1aa80; }

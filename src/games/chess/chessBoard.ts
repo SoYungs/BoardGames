@@ -96,11 +96,11 @@ export function applyMove(board: Board, meta: GameMeta, move: Move): { board: Bo
   }
 
   if (piece.type === 'k') clearCastlingForSide(nextMeta.castling, piece.side)
-  if (piece.type === 'r') {
+  if (piece.type === 'r' && move.fromR === (piece.side === 'white' ? 7 : 0)) {
     if (move.fromC === 0) nextMeta.castling[piece.side].queenside = false
     if (move.fromC === 7) nextMeta.castling[piece.side].kingside = false
   }
-  if (cap?.type === 'r') {
+  if (cap?.type === 'r' && move.toR === (cap.side === 'white' ? 7 : 0)) {
     if (move.toC === 0) nextMeta.castling[cap.side].queenside = false
     if (move.toC === 7) nextMeta.castling[cap.side].kingside = false
   }

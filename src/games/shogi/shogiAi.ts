@@ -1,13 +1,51 @@
-import { MATE_SCORE, searchBestMove } from '../ai/search'
+import { boundedAiBudget, MATE_SCORE, searchBestMove } from '../ai/search'
+import { immediateCaptureGain, type CaptureAdapter } from '../ai/tactics'
 import { applyShogiMove } from './shogiBoard'
 import { findKing, inCheck, legalDropMoves, legalMovesFrom, legalMovesFromChecked } from './shogiMoves'
 import { PIECE_VALUE, type Board, type Hand, type Move, type Piece, type Side } from './shogiTypes'
 
 type Position = { board: Board; hand: Hand }
+const other = (side: Side): Side => side === 'sente' ? 'gote' : 'sente'
 function value(piece: Piece): number {
   if (piece.type === 'k') return 0
   if (!piece.promoted) return PIECE_VALUE[piece.type] * 10
   return piece.type === 'r' ? 820 : piece.type === 'b' ? 780 : 260
+}
+
+function* moves(position: Position, side: Side, check: () => void): Generator<Move> {
+  for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+    check()
+    if (position.board[r][c]?.side === side) yield* legalMovesFromChecked(position.board, position.hand, r, c)
+  }
+  yield* legalDropMoves(position.board, position.hand, side, check)
+}
+
+const exchanges: CaptureAdapter<Position, Move, Side> = {
+  *captures(position, side, check, target) {
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+      check()
+      if (position.board[r][c]?.side !== side) continue
+      for (const raw of legalMovesFrom(position.board, r, c)) {
+        const victim = position.board[raw.toR][raw.toC]
+        if (!victim || victim.type === 'k' || (target && (raw.toR !== target[0] || raw.toC !== target[1]))) continue
+        for (const move of legalMovesFromChecked(position.board, position.hand, r, c)) {
+          if (move.toR === raw.toR && move.toC === raw.toC) yield move
+        }
+      }
+    }
+  },
+  apply: (position, move, side) => applyShogiMove(position.board, position.hand, move, side),
+  other,
+  target: move => [move.toR, move.toC],
+  attackerValue: (position, move) => {
+    const piece = position.board[move.fromR!][move.fromC!]!
+    return piece.type === 'k' ? MATE_SCORE : value(piece)
+  },
+  gain: (position, move) => {
+    const victim = position.board[move.toR][move.toC]!
+    const mover = position.board[move.fromR!][move.fromC!]!
+    return value(victim) + PIECE_VALUE[victim.type] * 10.5 + (move.promote ? value({ ...mover, promoted: true }) - value(mover) : 0)
+  },
 }
 
 function placement(piece: Piece, r: number, c: number): number {
@@ -60,20 +98,20 @@ function order(position: Position, move: Move, side: Side): number {
 
 export function pickAiMoveShogi(board: Board, hand: Hand, side: Side, budgetMs = 800): Move | null {
   return searchBestMove({ board, hand }, side, {
-    *moves(position, turn, check) {
-      for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
-        check()
-        if (position.board[r][c]?.side === turn) yield* legalMovesFromChecked(position.board, position.hand, r, c)
-      }
-      yield* legalDropMoves(position.board, position.hand, turn, check)
-    },
+    moves,
     apply: (position, move, turn) => applyShogiMove(position.board, position.hand, move, turn),
-    other: turn => turn === 'sente' ? 'gote' : 'sente',
+    other,
     evaluate, order,
+    fallback: (position, move, turn, check) => {
+      const next = applyShogiMove(position.board, position.hand, move, turn)
+      const opponent = other(turn)
+      if (moves(next, opponent, check).next().done) return MATE_SCORE - 1
+      return evaluate(next, turn) - immediateCaptureGain(next, opponent, exchanges, check)
+    },
     tactical: (position, move) => !!position.board[move.toR][move.toC] || !!move.promote,
     inCheck: (position, turn) => inCheck(position.board, turn),
     terminal: (_position, _turn, ply) => -MATE_SCORE + ply,
     moveKey: move => `${move.fromR ?? ''},${move.fromC ?? ''},${move.toR},${move.toC},${move.dropType ?? ''},${move.promote ?? ''}`,
     key: (position, turn) => `${turn}|${position.board.map(row => row.map(piece => piece ? `${piece.side === 'sente' ? piece.type.toUpperCase() : piece.type}${piece.promoted ? '+' : ''}` : '.').join('')).join('')}|${[...position.hand.sente].sort().join('')}|${[...position.hand.gote].sort().join('')}`,
-  }, { budgetMs, maxDepth: 5, quiescenceDepth: 2, rootLimit: 64 })
+  }, { budgetMs: boundedAiBudget(budgetMs, 25), maxDepth: 5, quiescenceDepth: 2, rootLimit: 64 })
 }

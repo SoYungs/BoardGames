@@ -1,4 +1,8 @@
 import { GameResult } from '../../components/GameResult'
+import { GameStatus } from '../../components/GameStatus'
+import { BoardEffects } from '../../components/BoardEffects'
+import { InteractionHint } from '../../components/InteractionHint'
+import '../../styles/moving-games.css'
 import {
   useCallback,
   useEffect,
@@ -8,7 +12,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ResponsiveBoard } from '../../components/ResponsiveBoard'
 import { scheduleAiMove } from '../../workers/scheduleAiMove'
 import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
@@ -41,6 +45,10 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const [lastMove, setLastMove] = useState<Move | null>(null)
   const [history, setHistory] = useState<XiangqiSnap[]>([])
   const [aiError, setAiError] = useState(false)
+  const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
+  const [boardEpoch, setBoardEpoch] = useState(0)
+  const effectSequence = useRef(0)
+  const reduceMotion = useReducedMotion()
 
   const boardForAiRef = useRef(board)
   useLayoutEffect(() => {
@@ -75,6 +83,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     setLastMove(null)
     setHistory([])
     setAiError(false)
+    setMoveEffect(null)
+    setBoardEpoch(epoch => epoch + 1)
   }, [])
 
   const undo = useCallback(() => {
@@ -86,6 +96,8 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     setLastMove(prev.lastMove)
     setWinner(prev.winner)
     setSelected(prev.selected)
+    setMoveEffect(null)
+    setBoardEpoch(epoch => epoch + 1)
   }, [mode, history])
 
   const tryMove = useCallback(
@@ -104,6 +116,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       }
       const cap = board[m.toR][m.toC]
       const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
+      setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: cap ? 'capture' : 'move' })
       setLastMove(m)
       setBoard(next)
       setSelected(null)
@@ -133,6 +146,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       }
       const cap = cur[m.toR][m.toC]
       const next = applyMove(cur, m.fromR, m.fromC, m.toR, m.toC)
+      setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: cap ? 'capture' : 'move' })
       setLastMove(m)
       if (cap?.type === 'k') {
         setWinner(aiSide)
@@ -172,6 +186,11 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     }
   }
 
+  const thinking = mode === 'ai' && turn === aiSide && !winner && !aiError
+  const selectedPiece = selected ? board[selected[0]][selected[1]] : null
+  const detail = aiError ? '请点击重新开始，恢复对局' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
+    : winner ? '本局结束，可重新开始' : thinking ? '电脑正在思考，下一步很快就来' : '先选自己的棋子，再点击标记的落点'
+
   const w = PAD * 2 + CELL * (9 - 1)
   const h = PAD * 2 + CELL * (10 - 1)
 
@@ -185,9 +204,9 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const riverHanX = dualRiver ? gridMidX + riverSideOffset : PAD + 5.2 * CELL
 
   return (
-    <div className="xiangqi-wrap">
+    <div className="xiangqi-wrap moving-game">
       <div className="xiangqi-toolbar">
-        <p className="xiangqi-status" role="status" aria-live="polite" data-thinking={mode === 'ai' && turn === aiSide && !winner && !aiError}>{status}</p>
+        <GameStatus status={status} thinking={thinking} sideLabel={turn === 'red' ? '红方' : '黑方'} sideTone={turn === 'red' ? 'red' : 'dark'} detail={detail} />
         <div className="xiangqi-actions">
           {mode === 'local' && (
             <button type="button" className="xiangqi-undo" onClick={undo} disabled={history.length === 0}>
@@ -200,7 +219,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
         </div>
       </div>
       <GameResult result={winner ? status : null} onRestart={reset} />
-      {mode === 'ai' && <p className="xiangqi-hint">你执红棋在下方先手；电脑执黑。</p>}
+      <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={selected ? 1 : 0} note={winner ? '本局结束。可重新开始，或在双人模式悔棋复盘。' : isCheck ? '正在被将军：先化解对将帅的威胁。' : mode === 'ai' ? '你执红方先手；绿点可走，金圈可吃。' : '绿点可走，金圈可吃；点击另一枚己方棋子可重新选择。'} />
       <ResponsiveBoard width={w + 22} height={h + 22}>
       <div
         className="xiangqi-board-outer"
@@ -220,6 +239,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
               将军
             </div>
           )}
+          <BoardEffects key={boardEpoch} width={w} height={h} eventKey={moveEffect?.eventKey ?? ''} from={moveEffect ? { x: PAD + moveEffect.move.fromC * CELL, y: PAD + moveEffect.move.fromR * CELL } : undefined} to={moveEffect ? { x: PAD + moveEffect.move.toC * CELL, y: PAD + moveEffect.move.toR * CELL } : undefined} kind={moveEffect?.kind} />
           <svg
             className="xiangqi-svg"
             width={w}
@@ -320,6 +340,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
             Array.from({ length: 9 }, (_, c) => {
               const isSel = selected?.[0] === r && selected?.[1] === c
               const isTarget = targets.some((m) => m.toR === r && m.toC === c)
+              const isCapture = isTarget && !!board[r][c]
               const isLastFrom = lastMove?.fromR === r && lastMove?.fromC === c
               const isLastTo = lastMove?.toR === r && lastMove?.toC === c
               const piece = board[r][c]
@@ -328,29 +349,31 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
                 <button
                   key={`${r}-${c}`}
                   type="button"
-                  className={`xiangqi-cell ${isSel ? 'selected' : ''} ${isTarget ? 'target' : ''} ${isLastFrom ? 'last-from' : ''} ${isLastTo ? 'last-to' : ''}`}
+                  className={`xiangqi-cell ${isSel ? 'selected' : ''} ${isTarget ? 'target' : ''} ${isCapture ? 'capture-target' : ''} ${isLastFrom ? 'last-from' : ''} ${isLastTo ? 'last-to' : ''}`}
                   style={{
                     left: PAD + c * CELL - 22,
                     top: PAD + r * CELL - 22,
                   }}
-                  aria-label={`第 ${r + 1} 行第 ${c + 1} 列，${label}${isTarget ? '，合法目标' : ''}`}
+                  aria-label={`第 ${r + 1} 行第 ${c + 1} 列，${label}${isTarget ? isCapture ? '，可吃子' : '，可走空位' : ''}`}
                   aria-pressed={isSel}
+                  disabled={!!winner || thinking}
                   onClick={() => onCellClick(r, c)}
-                />
+                >{isTarget && <span aria-hidden="true" className={`move-target-marker ${isCapture ? 'move-target-marker--capture' : ''}`} />}</button>
               )
             }),
           )}
-          <AnimatePresence initial={false}>
+          <AnimatePresence key={boardEpoch} initial={false}>
           {board.flatMap((row, r) =>
             row.map((piece, c) =>
               piece ? (
                 <motion.div
                   key={piece.id}
-                  style={{ position: 'absolute', left: 0, top: 0, width: 40, height: 40, pointerEvents: 'none' }}
-                  initial={{ opacity: 0, scale: 0.65 }}
+                  className={`moving-piece ${lastMove?.toR === r && lastMove?.toC === c ? 'moving-piece--last' : ''}`}
+                  style={{ width: 40, height: 40 }}
+                  initial={reduceMotion ? false : { x: PAD + c * CELL - 20, y: PAD + r * CELL - 20, opacity: 0, scale: .72 }}
                   animate={{ x: PAD + c * CELL - 20, y: PAD + r * CELL - 20, opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.45 }}
-                  transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+                  exit={{ opacity: 0, scale: .55 }}
+                  transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 31, mass: .85 }}
                   aria-hidden="true"
                 >
                   <div className={`xiangqi-piece ${piece.side}`} style={{ left: 0, top: 0 }}>

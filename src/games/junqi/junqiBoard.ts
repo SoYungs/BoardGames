@@ -103,15 +103,16 @@ export function applyMove(
   const next = cloneBoard(board)
   const attacker = board[move.fromR][move.fromC]!
   const defender = board[move.toR][move.toC]
+  const moved = { ...attacker, hasMoved: true, hasTurned: attacker.hasTurned || (move.fromR !== move.toR && move.fromC !== move.toC) }
 
   if (!defender) {
-    next[move.toR][move.toC] = { ...attacker }
+    next[move.toR][move.toC] = moved
     next[move.fromR][move.fromC] = null
     return next
   }
 
   if (result === 'attacker') {
-    next[move.toR][move.toC] = { ...attacker, revealed: true }
+    next[move.toR][move.toC] = { ...moved, revealed: true }
     next[move.fromR][move.fromC] = null
   } else if (result === 'defender') {
     next[move.fromR][move.fromC] = null

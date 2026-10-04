@@ -9,13 +9,21 @@ function checkTime(deadline: number) {
   if (performance.now() >= deadline) throw SEARCH_TIMEOUT
 }
 
-/** Conservative eye test; unoccupied diagonals are not assumed to be secure. */
+/** A secure one-point eye belongs to one connected group, with no false-eye diagonals. */
 export function isTrueGoEye(board: GoBoard, r: number, c: number, side: GoSide): boolean {
-  if (board[r][c] !== 0 || goNeighbors(r, c).some((point) => board[point.r][point.c] !== side)) return false
+  const neighbors = goNeighbors(r, c)
+  if (board[r][c] !== 0 || neighbors.some((point) => board[point.r][point.c] !== side)) return false
   const diagonals = [{ r: r - 1, c: c - 1 }, { r: r - 1, c: c + 1 }, { r: r + 1, c: c - 1 }, { r: r + 1, c: c + 1 }]
     .filter((point) => point.r >= 0 && point.r < GO_SIZE && point.c >= 0 && point.c < GO_SIZE)
+  const hostile = diagonals.filter((point) => board[point.r][point.c] === otherGoSide(side)).length
+  if (hostile > (diagonals.length === 4 ? 1 : 0)) return false
   const friendly = diagonals.filter((point) => board[point.r][point.c] === side).length
-  return diagonals.length === 4 ? friendly >= 3 : friendly === diagonals.length
+  if (diagonals.length === 4 ? friendly >= 3 : friendly === diagonals.length) return true
+  // Empty diagonals inside a connected enclosure do not make this a false eye.
+  // Requiring one group still allows useful connections between separate strings.
+  const group = getGoGroup(board, neighbors[0].r, neighbors[0].c)!
+  const connected = new Set(group.stones.map(goPointKey))
+  return neighbors.every((point) => connected.has(goPointKey(point)))
 }
 
 function groupMap(groups: GoGroup[]): Map<number, GoGroup> {
@@ -36,6 +44,7 @@ function moveCandidates(position: GoPosition, deadline: number, strictTime: bool
   const side = position.turn
   const groups = getGoGroups(position.board)
   const map = groupMap(groups)
+  const threatened = groups.filter((group) => group.side === side && group.liberties.length === 1)
   const candidates: Candidate[] = []
   for (let r = 0; r < GO_SIZE; r++) {
     if (strictTime) checkTime(deadline)
@@ -47,13 +56,26 @@ function moveCandidates(position: GoPosition, deadline: number, strictTime: bool
       const own = nearbyGroups(position.board, r, c, side, map)
       const enemies = nearbyGroups(position.board, r, c, otherGoSide(side), map)
       const resultingGroup = getGoGroup(played.position.board, r, c)!
-      const saves = own.filter((group) => group.liberties.length === 1 && resultingGroup.liberties.length > 1)
+      const saves = threatened.filter((group) => {
+        const first = group.stones[0]
+        return getGoGroup(played.position.board, first.r, first.c)!.liberties.length > 1
+      })
         .reduce((count, group) => count + group.stones.length, 0)
       const captured = played.captured.length
       if (isTrueGoEye(position.board, r, c, side) && !captured && !saves) continue
       // Avoid offering the opponent a free stone unless the move captures or rescues.
       if (resultingGroup.liberties.length === 1 && !captured && !saves) continue
+      let immediateLoss = 0
+      if (resultingGroup.liberties.length === 1) {
+        const liberty = resultingGroup.liberties[0]
+        const reply = playGoMove(played.position, { type: 'place', ...liberty })
+        if (reply.ok) immediateLoss = reply.captured.length
+        // Do not fall for a losing snapback, even when there is no time to search.
+        // A simple-ko capture remains available because its immediate reply is illegal.
+        if (immediateLoss > captured) continue
+      }
       let priority = captured * 140 + saves * 165
+      priority -= immediateLoss * 140
       priority += Math.max(0, own.length - 1) * 60 + Math.max(0, enemies.length - 1) * 70
       for (const group of enemies) {
         if (group.liberties.length === 2) priority += 26 + Math.min(group.stones.length, 5) * 6
@@ -121,7 +143,7 @@ function search(position: GoPosition, side: GoSide, depth: number, alpha: number
 /** Local tactical beam search, capped at 650 ms; never mutates the input. */
 export function pickAiMoveGo(position: GoPosition, side: GoSide = position.turn, budgetMs = 650): GoMove | null {
   if (position.result || side !== position.turn) return null
-  const deadline = performance.now() + Math.max(10, Math.min(650, budgetMs))
+  const deadline = performance.now() + Math.max(10, Math.min(650, Number.isNaN(budgetMs) ? 10 : budgetMs))
   const candidates = moveCandidates(position, deadline, false)
   if (candidates.length === 0) return { type: 'pass' }
   // Capture/rescue priorities provide a useful answer even at the smallest budget.
