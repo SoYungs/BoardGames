@@ -21,7 +21,8 @@ import { applyMove, createInitialBoard, snapshotBoard } from './xiangqiBoard'
 import type { XiangqiAnalysis } from './xiangqiAi'
 import type { Board, Move, Side } from './xiangqiTypes'
 import { pieceChar } from './xiangqiTypes'
-import { getXiangqiRepetitionResult, getXiangqiRepetitionWarning } from './xiangqiRepetition'
+import { getXiangqiRepetitionWarning } from './xiangqiRepetition'
+import { adjudicateXiangqi, isXiangqiRuleDraw, isXiangqiRuleLoss } from './xiangqiOutcome'
 import {
   clearXiangqiSession,
   loadXiangqiSession,
@@ -32,7 +33,6 @@ import {
   type XiangqiSnap,
 } from './xiangqiSession'
 import {
-  getXiangqiWinner,
   inCheck,
   legalMovesFromChecked,
 } from './xiangqiMoves'
@@ -46,9 +46,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const [initial] = useState(() => {
     const saved = loadXiangqiSession(mode)
     const state = saved.state ?? { board: createInitialBoard(), turn: 'red' as Side, selected: null, winner: null, lastMove: null, history: [], depth: 8 as XiangqiDepth, repetitionResult: null }
-    // Re-evaluate unfinished saves, including versions written before repetition adjudication.
-    const repetitionResult = state.repetitionResult ?? (!state.winner ? getXiangqiRepetitionResult(state.history, state.board, state.turn) : null)
-    return { kind: saved.kind, state: { ...state, selected: mode === 'ai' && state.turn === 'black' ? null : state.selected, repetitionResult, winner: repetitionResult?.kind === 'perpetual-check' ? repetitionResult.winner : state.winner } }
+    return { kind: saved.kind, state: { ...state, selected: mode === 'ai' && state.turn === 'black' ? null : state.selected } }
   })
   const [board, setBoard] = useState<Board>(initial.state.board)
   const [turn, setTurn] = useState<Side>(initial.state.turn)
@@ -74,7 +72,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const reduceMotion = useReducedMotion()
   const present = useIsPresent()
   const presentRef = useRef(present)
-  const gameOver = winner !== null || repetitionResult?.kind === 'repetition-draw'
+  const gameOver = winner !== null || isXiangqiRuleDraw(repetitionResult)
 
   useLayoutEffect(() => { presentRef.current = present }, [present])
   useEffect(() => {
@@ -113,15 +111,17 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const repetitionWarning = useMemo(() => gameOver ? null : getXiangqiRepetitionWarning(history, board, turn), [gameOver, history, board, turn])
 
   const status = useMemo(() => {
-    if (repetitionResult?.kind === 'perpetual-check') return `${repetitionResult.offender === 'red' ? '红方' : '黑方'}长将判负 · ${repetitionResult.winner === 'red' ? '红方' : '黑方'}胜`
+    if (isXiangqiRuleLoss(repetitionResult)) return `${repetitionResult.offender === 'red' ? '红方' : '黑方'}${repetitionResult.kind === 'perpetual-check' ? '长将' : '长捉'}判负 · ${repetitionResult.winner === 'red' ? '红方' : '黑方'}胜`
     if (repetitionResult?.kind === 'repetition-draw') return '重复局面 · 和棋'
-    if (winner) return `${winner === 'red' ? '红方' : '黑方'} 胜`
+    if (repetitionResult?.kind === 'dead-position') return '双方均无取胜可能 · 和棋'
+    if (repetitionResult?.kind === 'natural-movecount') return '自然限着 · 和棋'
+    if (winner) return `${winner === 'red' ? '红方' : '黑方'} 胜 · ${inCheck(board, turn) ? '将死' : '困毙'}`
     if (aiError) return `${aiError.kind === 'timeout' ? '电脑计算超时' : '电脑计算遇到问题'} · ${saveStatus === 'saved' ? '棋局已保留' : '棋局仍在本页'}`
     if (mode === 'ai' && turn === aiSide) return '电脑思考中…'
     const sideLabel = turn === 'red' ? '红方' : '黑方'
     const chk = isCheck ? ' · 将军！' : ''
     return `${sideLabel} 行棋${chk}`
-  }, [winner, repetitionResult, mode, turn, aiSide, isCheck, aiError, saveStatus])
+  }, [winner, repetitionResult, mode, turn, aiSide, isCheck, aiError, saveStatus, board])
 
   const reset = useCallback(() => {
     importSequence.current++
@@ -173,17 +173,16 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       setTransferMessage('内容不是有效的当前模式象棋棋局，未改变正在进行的对局。')
       return false
     }
-    const repeated = state.repetitionResult ?? (!state.winner ? getXiangqiRepetitionResult(state.history, state.board, state.turn) : null)
     aiCancelRef.current?.()
     aiCancelRef.current = null
     setBoard(state.board)
     setTurn(state.turn)
     setSelected(mode === 'ai' && state.turn === 'black' ? null : state.selected)
-    setWinner(repeated?.kind === 'perpetual-check' ? repeated.winner : state.winner)
+    setWinner(state.winner)
     setLastMove(state.lastMove)
     setHistory(state.history)
     setDepth(state.depth)
-    setRepetitionResult(repeated)
+    setRepetitionResult(state.repetitionResult)
     setAiError(null)
     setAnalysis(null)
     setMoveEffect(null)
@@ -219,12 +218,14 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     aiCancelRef.current?.()
     aiCancelRef.current = null
     const prev = history[index]
-    setHistory(history.slice(0, index))
+    const restoredHistory = history.slice(0, index)
+    const outcome = adjudicateXiangqi(restoredHistory, prev.board, prev.turn)
+    setHistory(restoredHistory)
     setBoard(snapshotBoard(prev.board))
     setTurn(prev.turn)
     setLastMove(prev.lastMove)
-    setWinner(prev.winner)
-    setRepetitionResult(prev.repetitionResult)
+    setWinner(outcome.winner)
+    setRepetitionResult(outcome.result)
     setSelected(mode === 'local' ? prev.selected : null)
     setAiError(null)
     setTransferMessage('')
@@ -258,19 +259,10 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       setBoard(next)
       setSelected(null)
       const opp: Side = turn === 'red' ? 'black' : 'red'
-      if (cap?.type === 'k') {
-        setWinner(turn)
-        return
-      }
       const nextTurn = opp
-      const nextWinner = getXiangqiWinner(next, nextTurn)
-      if (nextWinner) {
-        setWinner(nextWinner)
-        return
-      }
-      const repeated = getXiangqiRepetitionResult(nextHistory, next, nextTurn)
-      setRepetitionResult(repeated)
-      if (repeated?.kind === 'perpetual-check') setWinner(repeated.winner)
+      const outcome = adjudicateXiangqi(nextHistory, next, nextTurn)
+      setWinner(outcome.winner)
+      setRepetitionResult(outcome.result)
       setTurn(nextTurn)
     },
     [board, turn, lastMove, winner, selected, history, repetitionResult],
@@ -285,7 +277,9 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       setSelected(null)
       setAnalysis(result ?? null)
       if (!m) {
-        setWinner(humanSide)
+        const outcome = adjudicateXiangqi(history, cur, aiSide)
+        setWinner(outcome.winner)
+        setRepetitionResult(outcome.result)
         return
       }
       const nextHistory: XiangqiSnap[] = [...history, { board: snapshotBoard(cur), turn: aiSide, lastMove, winner: null, selected: null, repetitionResult: null }]
@@ -294,21 +288,10 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
       const next = applyMove(cur, m.fromR, m.fromC, m.toR, m.toC)
       setMoveEffect({ move: m, eventKey: ++effectSequence.current, kind: cap ? 'capture' : 'move' })
       setLastMove(m)
-      if (cap?.type === 'k') {
-        setWinner(aiSide)
-        setBoard(next)
-        return
-      }
-      const nextWinner = getXiangqiWinner(next, 'red')
-      if (nextWinner) {
-        setWinner(nextWinner)
-        setBoard(next)
-        return
-      }
       setBoard(next)
-      const repeated = getXiangqiRepetitionResult(nextHistory, next, 'red')
-      setRepetitionResult(repeated)
-      if (repeated?.kind === 'perpetual-check') setWinner(repeated.winner)
+      const outcome = adjudicateXiangqi(nextHistory, next, 'red')
+      setRepetitionResult(outcome.result)
+      setWinner(outcome.winner)
       setTurn('red')
     }, 140, failure => {
       aiCancelRef.current = null
@@ -345,7 +328,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
 
   const thinking = mode === 'ai' && turn === aiSide && !gameOver && !aiError
   const selectedPiece = selected ? board[selected[0]][selected[1]] : null
-  const detail = gameOver ? repetitionResult?.kind === 'perpetual-check' && continueIndex >= 0 ? '长将已判负，棋盘暂停；可点下方「悔棋继续练习」' : '本局结束，棋盘暂停；可悔棋继续练习或重新开始' : aiError ? '点继续计算，让电脑重新思考当前局面；已走的棋不会撤回' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
+  const detail = gameOver ? isXiangqiRuleLoss(repetitionResult) && continueIndex >= 0 ? `${repetitionResult.kind === 'perpetual-check' ? '长将' : '长捉'}已判负，棋盘暂停；可点下方「悔棋继续练习」` : '本局结束，棋盘暂停；可悔棋继续练习或重新开始' : aiError ? '点继续计算，让电脑重新思考当前局面；已走的棋不会撤回' : selectedPiece ? `已选${pieceChar(selectedPiece)} · ${targets.length ? `${targets.length} 个落点可走` : '暂无合法走法，换一枚棋子'}`
     : thinking ? '电脑正在思考，也可悔棋重新尝试' : '先选自己的棋子，再点击标记的落点'
 
   const w = PAD * 2 + CELL * (9 - 1)
@@ -403,7 +386,12 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
         {saveStatus === 'saved' ? '棋局和悔棋记录已保存在本标签页，刷新或离开后返回可继续；关闭前可导出备份。' : saveStatus === 'quota' ? '浏览器存储空间不足，当前棋局无法自动保存；请导出备份，并保持本页。' : saveStatus === 'unavailable' ? '当前浏览器无法自动保存棋局；请导出备份，并保持本页。' : '正在保存棋局…'}
       </p>
       {transferMessage && <p className="xiangqi-ai-depth-note" role="status" aria-live="polite">{transferMessage}</p>}
-      {repetitionWarning && <p className="xiangqi-ai-depth-note xiangqi-repetition-warning" role="status" aria-live="polite">{repetitionWarning.kind === 'perpetual-check' ? `${repetitionWarning.offender === 'red' ? '红方' : '黑方'}正在长将，再重复相同局面将判负，请变招。` : '局面已重复一次，再次重复将判和棋；变招可避免循环。'}</p>}
+      {repetitionWarning && <p className="xiangqi-ai-depth-note xiangqi-repetition-warning" role="status" aria-live="polite">{isXiangqiRuleLoss(repetitionWarning) ? `${repetitionWarning.offender === 'red' ? '红方' : '黑方'}正在${repetitionWarning.kind === 'perpetual-check' ? '长将' : '长捉'}，相同局面第三次出现将判负，请变招。` : '局面已重复；无违例的相同局面出现四次判和。变招可避免循环。'}</p>}
+      <details className="xiangqi-ai-depth-note">
+        <summary>本局采用世象联 WXF 规则</summary>
+        <p>将死、困毙均判负；普通重复局面四次判和，单方长将、长捉在第三次重复时判负。捉子会核对实际应招、有根和兑子等情况。双方合计连续 100 手无吃子可判自然限着和棋，提和方将军最多计 10 手。无论胜负和棋，均可悔棋继续练习。</p>
+        <a href="https://www.wxf-xiangqi.org/images/wxf-rules/2018_World_Xiangqi_Rules_Chinese_2018.pdf" target="_blank" rel="noreferrer">查看《世界象棋规则》</a>
+      </details>
       <GameResult result={gameOver ? status : null} onRestart={continueIndex >= 0 ? continuePractice : reset} restartLabel={continueIndex >= 0 ? '悔棋继续练习' : '再来一局'} />
       {gameOver && repetitionResult?.kind === 'perpetual-check' && repetitionResult.offender === aiSide && mode === 'ai' && turn === aiSide && continueIndex >= 0 && <p className="xiangqi-ai-depth-note">继续练习会回到电脑最后一次重复将军之前，让电脑重新变招；普通「悔棋」仍只撤回你上一手。</p>}
       <InteractionHint steps={['选己方子', '查看落点', '点击走子']} activeStep={selected ? 1 : 0} note={gameOver ? '本局结束。可悔棋继续练习，或重新开始。' : isCheck ? '正在被将军：先化解对将帅的威胁。' : mode === 'ai' ? '你执红方先手；绿点可走，金圈可吃。悔棋不限次数，每次回到你上一手行棋前。' : '绿点可走，金圈可吃；点击另一枚己方棋子可重新选择。'} />

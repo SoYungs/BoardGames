@@ -35,6 +35,13 @@ test('xiangqi accepts a no-move result for a genuine palace checkmate', () => {
   assert.deepEqual(parseAiReply('xiangqi', { board, side: 'black' }, { move: null }), { ok: true, reply: { move: null } })
 })
 
+test('xiangqi accepts a rule-adjudicated dead position rather than reporting a stalled worker', () => {
+  const board: Board = Array.from({ length: 10 }, () => Array(9).fill(null))
+  board[0][3] = { id: 'bk', side: 'black', type: 'k' }
+  board[9][5] = { id: 'rk', side: 'red', type: 'k' }
+  assert.deepEqual(parseAiReply('xiangqi', { board, side: 'black' }, { move: null }), { ok: true, reply: { move: null } })
+})
+
 test('xiangqi rejects corrupt coordinates, enemy moves and moves through occupied pieces', () => {
   const illegal = [
     undefined, 12, {},

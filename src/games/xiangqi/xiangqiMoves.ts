@@ -188,7 +188,10 @@ function advisorMoves(board: Board, r: number, c: number, side: Side, out: Move[
   for (const [dr, dc] of dirs) {
     const nr = r + dr
     const nc = c + dc
-    if (!inPalace(nr, nc, side)) continue
+    const centerRow = side === 'black' ? 1 : 8
+    // Advisors follow the two marked diagonals, rather than every square of
+    // the palace. This also keeps edited/off-diagonal positions from moving.
+    if (!inPalace(nr, nc, side) || Math.abs(nr - centerRow) !== Math.abs(nc - 4)) continue
     pushIfEmptyOrEnemy(board, nr, nc, side, out, r, c)
   }
 }
@@ -258,21 +261,18 @@ function movesForPiece(board: Board, r: number, c: number, piece: Piece, out: Mo
 }
 
 export function pseudoLegalMovesFrom(board: Board, r: number, c: number): Move[] {
+  if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || r >= ROWS || c < 0 || c >= COLS) return []
   const piece = board[r][c]
   if (!piece) return []
   const raw: Move[] = []
   movesForPiece(board, r, c, piece, raw)
-  return raw
+  // WXF 2.8: generals are checkmated, never captured. The private attack
+  // generator remains unfiltered so inCheck still recognizes the threat.
+  return raw.filter(move => board[move.toR][move.toC]?.type !== 'k')
 }
 
 export function legalMovesFrom(board: Board, r: number, c: number): Move[] {
-  const raw = pseudoLegalMovesFrom(board, r, c)
-  const ok: Move[] = []
-  for (const m of raw) {
-    const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)
-    if (!flyingGeneral(next)) ok.push(m)
-  }
-  return ok
+  return legalMovesFromChecked(board, r, c)
 }
 
 export function allLegalMoves(board: Board, side: Side): Move[] {
@@ -319,7 +319,7 @@ export function inCheck(board: Board, side: Side): boolean {
 }
 
 export function legalMovesFromChecked(board: Board, r: number, c: number): Move[] {
-  const piece = board[r][c]
+  const piece = board[r]?.[c]
   if (!piece) return []
   return pseudoLegalMovesFrom(board, r, c).filter((m) => {
     const next = applyMove(board, m.fromR, m.fromC, m.toR, m.toC)

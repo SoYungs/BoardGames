@@ -125,7 +125,7 @@ export class XiangqiSearchPosition {
     // positions containing a general in an unusual half of the board.
     for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
       const advisor = board[r + dr]?.[c + dc]
-      if (advisor?.side === enemy && advisor.type === 'a' && palace(r, c, enemy)) return true
+      if (advisor?.side === enemy && advisor.type === 'a' && palace(r, c, enemy) && Math.abs(r - (enemy === 'black' ? 1 : 8)) === Math.abs(c - 4)) return true
       const elephant = board[r + dr * 2]?.[c + dc * 2]
       if (elephant?.side === enemy && elephant.type === 'b' && (enemy === 'red' ? r >= 5 : r <= 4) && !board[r + dr]?.[c + dc]) return true
     }

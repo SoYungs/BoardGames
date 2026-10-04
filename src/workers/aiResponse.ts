@@ -1,4 +1,5 @@
 import { legalMovesFromChecked } from '../games/xiangqi/xiangqiMoves'
+import { adjudicateXiangqi, isXiangqiRuleDraw } from '../games/xiangqi/xiangqiOutcome'
 import type { AiAnalysis, AiTasks } from './aiTypes'
 
 type AiReply<G extends keyof AiTasks> = { move: AiTasks[G]['move'] | null; analysis?: AiAnalysis<G> }
@@ -10,11 +11,14 @@ const coordinate = (value: unknown, limit: number): value is number => typeof va
 export function parseAiReply<G extends keyof AiTasks>(game: G, input: AiTasks[G]['input'], value: unknown): ParsedReply<G> {
   if (!record(value) || !Object.hasOwn(value, 'move') || value.move === undefined) return { ok: false, message: 'Worker reply does not contain a move.' }
   if (game === 'xiangqi') {
-    const { board, side } = input as AiTasks['xiangqi']['input']
+    const { board, side, history = [] } = input as AiTasks['xiangqi']['input']
     const move = value.move
     if (move === null) {
-      for (let r = 0; r < 10; r++) for (let c = 0; c < 9; c++) {
-        if (board[r][c]?.side === side && legalMovesFromChecked(board, r, c).length) return { ok: false, message: 'Xiangqi worker returned no move for a playable position.' }
+      const outcome = adjudicateXiangqi(history, board, side)
+      if (!outcome.winner && !isXiangqiRuleDraw(outcome.result)) {
+        for (let r = 0; r < 10; r++) for (let c = 0; c < 9; c++) {
+          if (board[r][c]?.side === side && legalMovesFromChecked(board, r, c).length) return { ok: false, message: 'Xiangqi worker returned no move for a playable position.' }
+        }
       }
     } else {
       if (!record(move) || !coordinate(move.fromR, 10) || !coordinate(move.toR, 10) || !coordinate(move.fromC, 9) || !coordinate(move.toC, 9)) return { ok: false, message: 'Xiangqi worker returned invalid move coordinates.' }

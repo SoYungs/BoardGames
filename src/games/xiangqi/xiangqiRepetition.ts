@@ -1,10 +1,8 @@
-import { inCheck } from './xiangqiMoves'
+import { getWxfRepetitionResult, getWxfRepetitionWarning, type WxfRepetitionResult } from './xiangqiWxfRepetition'
 import type { Board, Side } from './xiangqiTypes'
 
 export type XiangqiPositionRecord = { board: Board; turn: Side }
-export type XiangqiRepetitionResult =
-  | { kind: 'perpetual-check'; winner: Side; offender: Side }
-  | { kind: 'repetition-draw' }
+export type XiangqiRepetitionResult = WxfRepetitionResult
 
 /** Layout and side to move define a position; animation instance IDs do not. */
 export function xiangqiPositionKey(board: Board, turn: Side): string {
@@ -36,17 +34,37 @@ export class XiangqiRepetitionTracker {
     if (!matches.length) this.indices.delete(record.key)
   }
 
-  result(occurrences = 3): XiangqiRepetitionResult | null {
+  occurrencesCurrent(): number {
+    const current = this.records.at(-1)
+    return current ? this.indices.get(current.key)!.length : 0
+  }
+
+  /** Both sides' latest played before-move phases can repeat independently. */
+  activityOccurrencesCurrent(): number {
+    // The last record is the unplayed current position. Legal histories
+    // alternate, so the previous two records are the latest played phases.
+    const current = this.records.at(-1), first = this.records.at(-2), second = this.records.at(-3)
+    if (!current || !first || !second || current.turn === first.turn || first.turn === second.turn) return 0
+    const count = (record: XiangqiRepetitionStamp) => {
+      const matches = this.indices.get(record.key)!
+      return matches.length - Number(matches.at(-1) === this.records.length - 1)
+    }
+    return Math.min(count(first), count(second))
+  }
+
+  /** A cheap check-only screen; full WXF adjudication also inspects chasing. */
+  result(occurrences?: number): XiangqiRepetitionResult | null {
     const current = this.records.at(-1)
     if (!current) return null
     const matches = this.indices.get(current.key)!
-    if (matches.length < occurrences) return null
-    const start = matches[matches.length - occurrences]
+    const required = occurrences ?? 3
+    if (matches.length < required) return null
+    const start = matches[matches.length - required]
     const count = { red: 0, black: 0 }, everyCheck = { red: true, black: true }
     for (let index = start + 1; index < this.records.length; index++) {
       const record = this.records[index]
       // Invalid/nonalternating history cannot establish a checking offender.
-      if (record.turn === this.records[index - 1].turn) return { kind: 'repetition-draw' }
+      if (record.turn === this.records[index - 1].turn) return null
       const mover = other(record.turn)
       count[mover]++
       everyCheck[mover] &&= record.checked
@@ -57,22 +75,18 @@ export class XiangqiRepetitionTracker {
       const offender: Side = redChecks ? 'red' : 'black'
       return { kind: 'perpetual-check', winner: other(offender), offender }
     }
-    return { kind: 'repetition-draw' }
+    // WXF Art. 19.8/20.1: mutual long check can already draw at three.
+    // Art. 3.2.B requires FOUR occurrences for an otherwise legal cycle.
+    return occurrences !== undefined || redChecks && blackChecks || matches.length >= 4 ? { kind: 'repetition-draw' } : null
   }
 }
 
-function inspect(history: readonly XiangqiPositionRecord[], board: Board, turn: Side, occurrences: number): XiangqiRepetitionResult | null {
-  const tracker = new XiangqiRepetitionTracker(history.map(record => ({ key: xiangqiPositionKey(record.board, record.turn), turn: record.turn, checked: inCheck(record.board, record.turn) })))
-  tracker.push({ key: xiangqiPositionKey(board, turn), turn, checked: inCheck(board, turn) })
-  return tracker.result(occurrences)
-}
-
-/** Third occurrence: unilateral continuous check loses; other cycles draw. */
+/** WXF: illegal check/chase cycles at three; ordinary repeated positions at four. */
 export function getXiangqiRepetitionResult(history: readonly XiangqiPositionRecord[], currentBoard: Board, nextTurn: Side): XiangqiRepetitionResult | null {
-  return inspect(history, currentBoard, nextTurn, 3)
+  return getWxfRepetitionResult(history, currentBoard, nextTurn)
 }
 
 /** Second occurrence warns about the completed cycle; it is not a result yet. */
 export function getXiangqiRepetitionWarning(history: readonly XiangqiPositionRecord[], currentBoard: Board, nextTurn: Side): XiangqiRepetitionResult | null {
-  return inspect(history, currentBoard, nextTurn, 2)
+  return getWxfRepetitionWarning(history, currentBoard, nextTurn)
 }

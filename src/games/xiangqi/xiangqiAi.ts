@@ -2,16 +2,20 @@ import { MATE_SCORE } from '../ai/search'
 import { pseudoLegalMovesFrom } from './xiangqiMoves'
 import { XiangqiSearchPosition, xiangqiPieceValue, xiangqiPlacement } from './xiangqiSearchPosition'
 import { XiangqiRepetitionTracker, type XiangqiPositionRecord } from './xiangqiRepetition'
-import type { Board, Move, Side } from './xiangqiTypes'
+import { getWxfRepetitionResult, getWxfRepetitionWarning } from './xiangqiWxfRepetition'
+import { getXiangqiNaturalMoveCount, isXiangqiDeadPosition } from './xiangqiNaturalDraw'
+import type { Board, Move, Piece, Side } from './xiangqiTypes'
 
 export type XiangqiAnalysis = { depth: number; nodes: number; elapsedMs: number; targetDepth: number; timedOut: boolean }
 type Entry = { hash: number; lock: number; context: number; contextLock: number; depth: number; extensions: number; score: number; bound: 'exact' | 'lower' | 'upper'; move: number }
 type Candidate = { move: Move; key: number; order: number; capture: boolean; checking: boolean }
+type NaturalCount = { plies: number; checks: Record<Side, number> }
 const other = (side: Side): Side => side === 'red' ? 'black' : 'red'
 const moveKey = (move: Move) => (move.fromR * 9 + move.fromC) * 90 + move.toR * 9 + move.toC
 const TIMEOUT = Symbol('Xiangqi search deadline')
 const MAX_PLY = 48
 const TABLE_SIZE = 65_536
+const attackingPiece = (piece: Piece) => piece.type === 'r' || piece.type === 'n' || piece.type === 'c' || piece.type === 'p'
 
 /** A reversible move must be the only two changed squares, without a capture. */
 function quietHistoryMove(before: Board, after: Board, side: Side): Move | null {
@@ -55,6 +59,8 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
   // square. A batch is at most 32 small move-generation/search operations.
   const check = () => { if ((clockChecks++ & 31) === 0 && performance.now() >= deadline) throw TIMEOUT }
   const result = (move: Move | null) => ({ move, analysis: { depth: completedDepth, nodes, elapsedMs: Math.max(0, performance.now() - started), targetDepth, timedOut } })
+  // Legacy imported games can already have ended with a removed general.
+  if (!board.some(row => row.some(piece => piece?.type === 'k' && piece.side === other(side)))) return result(null)
   // Obtain legal reserves before the deadline can interrupt a safety screen.
   const legal = position.legalMoves(side)
   if (!legal.length) return result(null)
@@ -65,6 +71,9 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
   const hashFor = (turn: Side) => (position.hash ^ (turn === 'red' ? 0xa32f41bd : 0x97db3187)) >>> 0
   const pathKey = (turn: Side) => hashFor(turn) * 0x20_0000 + (position.lock & 0x1f_ffff)
   const repetition = new XiangqiRepetitionTracker()
+  const searchMoves: Move[] = []
+  const naturalCounts: (NaturalCount | null)[] = [null]
+  const attackCounts = [board.reduce((sum, row) => sum + row.filter(piece => piece && attackingPiece(piece)).length, 0)]
   const contexts = [0x6db37152], contextLocks = [0x93c72ef1]
   const enterStamp = (key: number, turn: Side, checked: boolean) => {
     repetition.push({ key, turn, checked })
@@ -74,13 +83,55 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
     contexts.push((Math.imul(contexts.at(-1)! ^ low, 0x01000193) ^ high ^ Number(checked)) >>> 0)
     contextLocks.push((Math.imul(contextLocks.at(-1)! ^ high, 0x85ebca6b) ^ low ^ (checked ? 0x9e3779b9 : 0)) >>> 0)
   }
-  const enterPosition = (turn: Side, checked: boolean) => enterStamp(pathKey(turn), turn, checked)
-  const leavePosition = () => { repetition.pop(); contexts.pop(); contextLocks.pop() }
+  const enterPosition = (turn: Side, checked: boolean, move?: Move, captured: Piece | null = null) => {
+    enterStamp(pathKey(turn), turn, checked)
+    if (!move) return
+    searchMoves.push(move)
+    attackCounts.push(attackCounts.at(-1)! - Number(!!captured && attackingPiece(captured)))
+    const previous = naturalCounts.at(-1)!
+    const next = captured ? { plies: 0, checks: { red: 0, black: 0 } }
+      : previous ? { plies: previous.plies + 1, checks: { ...previous.checks } } : null
+    if (next && !captured && checked) next.checks[other(turn)]++
+    naturalCounts.push(next)
+  }
+  const leavePosition = () => { repetition.pop(); contexts.pop(); contextLocks.pop(); searchMoves.pop(); naturalCounts.pop(); attackCounts.pop() }
+  // Full rule adjudication needs the physical pieces and replies, whereas
+  // ordinary search nodes need only the compact occurrence counter. Build
+  // boards lazily for a possible cycle; never copy 90 squares at every node.
+  const fullRepetition = (turn: Side, warning = false, moves: readonly Move[] = searchMoves) => {
+    const records: XiangqiPositionRecord[] = []
+    for (const record of gameHistory) { check(); records.push(record) }
+    let before = board, nextTurn = side
+    for (const move of moves) {
+      check()
+      records.push({ board: before, turn: nextTurn })
+      const after = before.map(row => row.slice())
+      after[move.toR][move.toC] = after[move.fromR][move.fromC]
+      after[move.fromR][move.fromC] = null
+      before = after
+      nextTurn = other(nextTurn)
+    }
+    return warning ? getWxfRepetitionWarning(records, position.board, turn, 2, { check })
+      : getWxfRepetitionResult(records, position.board, turn, { check })
+  }
+  const naturalDraw = () => {
+    const count = naturalCounts.at(-1)
+    return !!count && Math.max(count.plies - Math.max(0, count.checks.red - 10), count.plies - Math.max(0, count.checks.black - 10)) >= 100
+  }
+  const possibleCycle = (tracker: XiangqiRepetitionTracker, occurrences: number) => Math.max(tracker.occurrencesCurrent(), tracker.activityOccurrencesCurrent()) >= occurrences
   const repeatedScore = (turn: Side, ply: number): number | null => {
-    const outcome = repetition.result()
-    if (!outcome) return null
+    const outcome = possibleCycle(repetition, 3) ? fullRepetition(turn) : null
+    let draw = naturalDraw()
+    if (!outcome && !draw && searchMoves.length && attackCounts.at(-1) === 0) {
+      check()
+      draw = isXiangqiDeadPosition(position.board)
+    }
+    if (!outcome && !draw) return null
+    // A physical mate/stalemate ends the game before an otherwise simultaneous
+    // repetition or natural draw, including the hundredth non-capturing ply.
+    if (!position.hasLegalMove(turn, check)) return -MATE_SCORE + ply
     repeatHits++
-    return outcome.kind === 'repetition-draw' ? 0 : (outcome.winner === turn ? MATE_SCORE - ply : -MATE_SCORE + ply)
+    return !outcome || outcome.kind === 'repetition-draw' ? 0 : (outcome.winner === turn ? MATE_SCORE - ply : -MATE_SCORE + ply)
   }
   // Break a second return to any played position, including quiet shuffling.
   // A-B-A-B piece shuffles are also discouraged when other pieces have moved,
@@ -102,8 +153,8 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
       tracker.push({ key: pathKey(nextTurn), turn: nextTurn, checked: position.inCheck(nextTurn) })
       try {
         if (playedPositions.has(pathKey(nextTurn)) || !victim && bounce && moveKey(move) === moveKey(bounce)) repeatedRoots.add(moveKey(move))
-        const warning = tracker.result(2)
-        if (warning?.kind === 'perpetual-check' && warning.offender === side) perpetualRoots.add(moveKey(move))
+        const warning = possibleCycle(tracker, 2) ? fullRepetition(nextTurn, true, [move]) : null
+        if (warning && warning.kind !== 'repetition-draw' && warning.offender === side && position.hasLegalMove(nextTurn, check)) perpetualRoots.add(moveKey(move))
       } finally { tracker.pop(); position.unmake(move, victim) }
       const freshReserve = legal.find(candidate => !repeatedRoots.has(moveKey(candidate)) && !perpetualRoots.has(moveKey(candidate)))
       if (freshReserve) best = freshReserve
@@ -128,8 +179,11 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
       enterStamp(stamp.key, stamp.turn, stamp.checked)
     }
     enterPosition(side, position.inCheck(side))
-    if (repetition.result()) return result(null)
+    if (possibleCycle(repetition, 3) && fullRepetition(side)) return result(null)
     if (gameHistory.length > 12) classifyRoots(repetition)
+    naturalCounts[0] = getXiangqiNaturalMoveCount(gameHistory, board, side, { check })
+    check()
+    if (naturalDraw() || isXiangqiDeadPosition(board)) return result(null)
   } catch (error) {
     if (error !== TIMEOUT) throw error
     timedOut = true
@@ -198,7 +252,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
 
   const ranked: { move: Move; score: number }[] = []
   const losing = new Set<number>()
-  const prohibitedCheck = (move: Move) => perpetualRoots.has(moveKey(move)) && legal.some(candidate => !perpetualRoots.has(moveKey(candidate)))
+  const prohibitedCycle = (move: Move) => perpetualRoots.has(moveKey(move)) && legal.some(candidate => !perpetualRoots.has(moveKey(candidate)))
   let fallbackScore = -Infinity
   let safe: Move | null = null
   try {
@@ -213,41 +267,45 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
       check(); nodes++
       const victim = position.make(move)
       let score: number, loses = false
-      enterPosition(other(side), position.inCheck(other(side)))
+      enterPosition(other(side), position.inCheck(other(side)), move, victim)
       try {
         if (!position.hasLegalMove(other(side), check)) { completedDepth = 1; return result(move) }
-        score = position.evaluate(side) - captureGain(other(side))
-        // A fallback is complete only after all enemy replies have been tested,
-        // including quiet cannon checks and non-checking stalemate moves.
-        for (const reply of candidates(other(side), 1)) {
-          const captured = position.make(reply.move)
-          enterPosition(side, reply.checking)
-          try {
-            // The human's legal evasion can close the cycle and make this AI
-            // move lose by continuous check, even when its own layout is new.
-            const outcome = repetition.result(2)
-            if (outcome?.kind === 'perpetual-check' && outcome.offender === side) {
-              perpetualRoots.add(moveKey(move))
-              repeatedRoots.add(moveKey(move))
-              loses = true
-              break
-            }
-            if (!position.hasLegalMove(side, check)) { loses = true; break }
-          } finally { leavePosition(); position.unmake(reply.move, captured) }
+        const terminal = repeatedScore(other(side), 1)
+        score = terminal !== null ? -terminal : position.evaluate(side) - captureGain(other(side))
+        if (terminal !== null) loses = score < -MATE_SCORE / 2
+        else {
+          // A fallback is complete only after all enemy replies have been
+          // tested, including quiet cannon checks and stalemate moves.
+          for (const reply of candidates(other(side), 1)) {
+            const captured = position.make(reply.move)
+            enterPosition(side, reply.checking, reply.move, captured)
+            try {
+              if (!position.hasLegalMove(side, check)) { loses = true; break }
+              // The human's legal evasion can close the cycle and make this AI
+              // move lose by continuous check/chase, even if its layout is new.
+              const outcome = possibleCycle(repetition, 2) ? fullRepetition(side, true) : null
+              if (outcome && outcome.kind !== 'repetition-draw' && outcome.offender === side) {
+                perpetualRoots.add(moveKey(move))
+                repeatedRoots.add(moveKey(move))
+                loses = true
+                break
+              }
+            } finally { leavePosition(); position.unmake(reply.move, captured) }
+          }
         }
       } finally { leavePosition(); position.unmake(move, victim) }
-      loses ||= prohibitedCheck(move)
+      loses ||= prohibitedCycle(move)
       if (loses) { losing.add(moveKey(move)); score = -MATE_SCORE + 2 }
       else if (repeatedRoots.has(moveKey(move))) score = -MATE_SCORE + MAX_PLY
       ranked.push({ move, score })
       if (!loses && score > fallbackScore) { fallbackScore = score; safe = move; best = move }
     }
     ranked.sort((a, b) => b.score - a.score)
-    if (!safe) best = (ranked.find(entry => !prohibitedCheck(entry.move)) ?? ranked[0]).move
+    if (!safe) best = (ranked.find(entry => !prohibitedCycle(entry.move)) ?? ranked[0]).move
   } catch (error) {
     if (error !== TIMEOUT) throw error
     timedOut = true
-    if (!safe) best = legal.find(move => !losing.has(moveKey(move)) && !repeatedRoots.has(moveKey(move)) && !prohibitedCheck(move)) ?? legal.find(move => !losing.has(moveKey(move)) && !prohibitedCheck(move)) ?? legal.find(move => !prohibitedCheck(move)) ?? best
+    if (!safe) best = legal.find(move => !losing.has(moveKey(move)) && !repeatedRoots.has(moveKey(move)) && !prohibitedCycle(move)) ?? legal.find(move => !losing.has(moveKey(move)) && !prohibitedCycle(move)) ?? legal.find(move => !prohibitedCycle(move)) ?? best
     return result(best)
   }
 
@@ -272,7 +330,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
       if (checked && checksLeft < -4) break
       const victim = position.make(entry.move)
       let score: number
-      enterPosition(other(turn), entry.checking)
+      enterPosition(other(turn), entry.checking, entry.move, victim)
       try { score = -quiet(other(turn), -beta, -alpha, ply + 1, capturesLeft - Number(entry.capture), checksLeft - Number(checked || entry.checking)) } finally { leavePosition(); position.unmake(entry.move, victim) }
       value = Math.max(value, score)
       alpha = Math.max(alpha, score)
@@ -308,7 +366,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
     for (let index = 0; index < moves.length; index++) {
       const entry = moves[index]
       const victim = position.make(entry.move)
-      enterPosition(other(turn), entry.checking)
+      enterPosition(other(turn), entry.checking, entry.move, victim)
       let score: number
       try {
         score = index === 0 ? -negamax(other(turn), depth - 1, -beta, -alpha, ply + 1, extensions)
@@ -330,8 +388,8 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
     return value
   }
 
-  const roots = ranked.filter(entry => !losing.has(moveKey(entry.move)) && !prohibitedCheck(entry.move))
-  if (!roots.length) roots.push(...ranked.filter(entry => !prohibitedCheck(entry.move)))
+  const roots = ranked.filter(entry => !losing.has(moveKey(entry.move)) && !prohibitedCycle(entry.move))
+  if (!roots.length) roots.push(...ranked.filter(entry => !prohibitedCycle(entry.move)))
   if (!roots.length) roots.push(...ranked)
   if (roots.some(entry => !repeatedRoots.has(moveKey(entry.move)))) {
     for (let index = roots.length - 1; index >= 0; index--) if (repeatedRoots.has(moveKey(roots[index].move))) roots.splice(index, 1)
@@ -345,7 +403,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
       for (const entry of roots) {
         check()
         const victim = position.make(entry.move)
-        enterPosition(other(side), position.inCheck(other(side)))
+        enterPosition(other(side), position.inCheck(other(side)), entry.move, victim)
         let score: number
         try { score = -negamax(other(side), depth - 1, -MATE_SCORE, -alpha, 1, 0) } finally { leavePosition(); position.unmake(entry.move, victim) }
         scores.set(moveKey(entry.move), score)

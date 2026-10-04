@@ -1,5 +1,6 @@
 import type { Board, Move, Piece, PieceType, Side } from './xiangqiTypes'
-import type { XiangqiRepetitionResult } from './xiangqiRepetition'
+import { getXiangqiHistoryMove, validateXiangqiHistory } from './xiangqiHistory'
+import { adjudicateXiangqi, type XiangqiRuleResult } from './xiangqiOutcome'
 
 export type XiangqiMode = 'local' | 'ai'
 export type XiangqiDepth = 4 | 6 | 8
@@ -10,7 +11,7 @@ export type XiangqiSnap = {
   lastMove: Move | null
   winner: Side | null
   selected: [number, number] | null
-  repetitionResult: XiangqiRepetitionResult | null
+  repetitionResult: XiangqiRuleResult | null
 }
 
 export type XiangqiSessionState = XiangqiSnap & {
@@ -67,7 +68,7 @@ function parseBoard(value: unknown, winner: Side | null): Board | null {
     }
     board.push(row)
   }
-  // A king can disappear on the final capture, but an unfinished game needs both.
+  // Preserve an old captured-king ending. New WXF play ends before king capture.
   if (winner === null && (counts.red.k !== 1 || counts.black.k !== 1)) return null
   if (winner !== null && counts[winner].k !== 1) return null
   return board
@@ -86,15 +87,15 @@ function parseSnap(value: unknown): XiangqiSnap | null {
   const board = parseBoard(value.board, winner)
   const lastMove = parseMove(value.lastMove)
   if (!board || lastMove === false) return null
-  let repetitionResult: XiangqiRepetitionResult | null = null
+  let repetitionResult: XiangqiRuleResult | null = null
   if (value.repetitionResult !== null && value.repetitionResult !== undefined) {
     if (!isRecord(value.repetitionResult)) return null
-    if (value.repetitionResult.kind === 'repetition-draw') {
+    if (value.repetitionResult.kind === 'repetition-draw' || value.repetitionResult.kind === 'dead-position' || value.repetitionResult.kind === 'natural-movecount') {
       if (winner !== null) return null
-      repetitionResult = { kind: 'repetition-draw' }
-    } else if (value.repetitionResult.kind === 'perpetual-check') {
+      repetitionResult = { kind: value.repetitionResult.kind }
+    } else if (value.repetitionResult.kind === 'perpetual-check' || value.repetitionResult.kind === 'perpetual-chase') {
       if (!isSide(value.repetitionResult.winner) || !isSide(value.repetitionResult.offender) || value.repetitionResult.winner === value.repetitionResult.offender || winner !== value.repetitionResult.winner) return null
-      repetitionResult = { kind: 'perpetual-check', winner: value.repetitionResult.winner, offender: value.repetitionResult.offender }
+      repetitionResult = { kind: value.repetitionResult.kind, winner: value.repetitionResult.winner, offender: value.repetitionResult.offender }
     } else return null
   }
   let selected: [number, number] | null = null
@@ -119,7 +120,19 @@ export function parseXiangqiSession(raw: string, mode: XiangqiMode): XiangqiSess
       if (!parsed) return null
       history.push(parsed)
     }
-    return { ...current, history, depth: value.depth as XiangqiDepth }
+    const valid = validateXiangqiHistory(history, current.board, current.turn)
+    if (!valid.ok) return null
+    const records = [...history, current]
+    for (let index = 1; index < records.length; index++) {
+      const before = records[index - 1], after = records[index]
+      const transition = getXiangqiHistoryMove(before.board, after.board, before.turn)
+      if (!transition || !after.lastMove || Object.entries(transition.move).some(([key, coordinate]) => after.lastMove![key as keyof Move] !== coordinate)) return null
+    }
+    // Outcome labels are caches, not evidence. Re-evaluate old threefold draws
+    // and edited winner fields using the same rules as a newly played move.
+    const outcome = adjudicateXiangqi(history, current.board, valid.turn)
+    const selected = current.selected && current.board[current.selected[0]][current.selected[1]]?.side === valid.turn ? current.selected : null
+    return { ...current, turn: valid.turn, selected, winner: outcome.winner, repetitionResult: outcome.result, history, depth: value.depth as XiangqiDepth }
   } catch {
     return null
   }

@@ -162,14 +162,14 @@ test('fast checks use the attacking horse leg and still allow a non-general doub
   }
 })
 
-test('capturing and restoring either general updates royal-safety caches and all position state', () => {
+test('a simulated general removal restores royal-safety caches but is never offered as a legal move', () => {
   for (const side of ['red', 'black'] as const) {
     const original = fromFen('4k4/4R4/9/9/9/9/9/9/9/4K4')
     const position = new XiangqiSearchPosition(freeze(side === 'red' ? original : mirror(original)))
     const before = snapshot(position)
     const fromR = side === 'red' ? 1 : 8, toR = side === 'red' ? 0 : 9
-    const move = compareRules(position, `${side} before capturing general`)[side].find(candidate => candidate.fromR === fromR && candidate.fromC === 4 && candidate.toR === toR && candidate.toC === 4)
-    assert.ok(move)
+    const move = { fromR, fromC: 4, toR, toC: 4 }
+    assert.ok(!compareRules(position, `${side} before simulated general removal`)[side].some(candidate => moveKey(candidate) === moveKey(move)))
     const captured = position.make(move)
     assert.equal(captured?.type, 'k')
     assert.equal(position.inCheck(other(side)), true)

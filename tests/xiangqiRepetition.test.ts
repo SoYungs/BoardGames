@@ -86,8 +86,9 @@ test('actual cannon/rook cycle is unilateral continuous check, with the checking
 test('nonchecking repeated king moves draw, and changing side to move prevents a false match', () => {
   const board = position(['...k.....', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.....K...'])
   const cycle = [move(9, 5, 8, 5), move(0, 3, 1, 3), move(8, 5, 9, 5), move(1, 3, 0, 3)]
-  const states = play(board, 'red', cycle, 2)
+  const states = play(board, 'red', cycle, 3)
   assert.ok(states.every(state => !inCheck(state.board, state.turn)))
+  assert.equal(inspect(states.slice(0, 9)), null, 'ordinary threefold repetition is not the WXF draw threshold')
   assert.deepEqual(inspect(states), { kind: 'repetition-draw' })
   assert.notEqual(xiangqiPositionKey(board, 'red'), xiangqiPositionKey(board, 'black'))
   assert.equal(getXiangqiRepetitionResult(states.slice(0, 8), states[8].board, 'black'), null)
@@ -104,7 +105,7 @@ test('mutual perpetual check draws using a legal cannon/pawn/rook countercheckin
 test('a cycle containing a nonchecking move is not adjudicated as continuous check', () => {
   const board = position(['...k.....', '.........', '.........', '.........', '.........', '.........', '....r....', '.........', '.........', '....K....'])
   const cycle = [move(9, 4, 9, 5), move(6, 4, 6, 6), move(9, 5, 9, 4), move(6, 6, 6, 4)]
-  const states = play(board, 'red', cycle, 2)
+  const states = play(board, 'red', cycle, 3)
   assert.equal(inCheck(states[2].board, 'red'), false)
   assert.deepEqual(inspect(states), { kind: 'repetition-draw' })
 })
@@ -175,8 +176,8 @@ test('played history does not suppress a novel discovered-cannon mate', () => {
   assert.deepEqual({ board: after, history }, before)
 })
 
-test('AI changes a quiet second position return before a third repetition is reached', () => {
-  const board = position(['....k....', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '...K.....'])
+test('AI changes a quiet second position return before the draw threshold is reached', () => {
+  const board = position(['....k....', '.........', '.........', '........r', '.........', '.........', 'R........', '.........', '.........', '...K.....'])
   const steps = [move(9, 3, 8, 3), move(0, 4, 1, 4), move(8, 3, 9, 3)]
   const states = play(board, 'red', steps)
   const current = states[3], history = states.slice(0, 3), returnMove = move(1, 4, 0, 4)

@@ -12,7 +12,7 @@ import {
   type XiangqiSessionStorage,
   type XiangqiSnap,
 } from '../src/games/xiangqi/xiangqiSession.ts'
-import type { Move } from '../src/games/xiangqi/xiangqiTypes.ts'
+import type { Board, Move, PieceType } from '../src/games/xiangqi/xiangqiTypes.ts'
 
 function memoryStorage(): XiangqiSessionStorage {
   const entries = new Map<string, string>()
@@ -38,6 +38,15 @@ function pendingReply(): XiangqiSessionState {
   return play(state, { fromR: 5, fromC: 0, toR: 4, toC: 0 })
 }
 
+function position(rows: string[]): Board {
+  return rows.map((row, r) => [...row].map((letter, c) => letter === '.' ? null : { id: `piece-${r}-${c}`, side: letter === letter.toUpperCase() ? 'red' : 'black', type: letter.toLowerCase() as PieceType }))
+}
+
+const horseCycle: Move[] = [
+  { fromR: 9, fromC: 1, toR: 7, toC: 2 }, { fromR: 0, fromC: 1, toR: 2, toC: 2 },
+  { fromR: 7, fromC: 2, toR: 9, toC: 1 }, { fromR: 2, fromC: 2, toR: 0, toC: 1 },
+]
+
 test('Xiangqi saves a pending computer turn, captures, last move and all undo snapshots without modifying play', () => {
   const state = pendingReply()
   const original = structuredClone(state)
@@ -56,15 +65,17 @@ test('Xiangqi saves a pending computer turn, captures, last move and all undo sn
 })
 
 test('Xiangqi storage and exported JSON retain an unlimited complete history and each supported depth', () => {
-  const state = initial()
-  for (let index = 0; index < 180; index++) {
-    state.history.push({ board: createInitialBoard(), turn: index % 2 ? 'black' : 'red', lastMove: null, winner: null, selected: null, repetitionResult: null })
-  }
+  let state = initial()
+  for (let index = 0; index < 180; index++) state = play(state, horseCycle[index % 4])
+  state.repetitionResult = { kind: 'repetition-draw' }
   for (const depth of [4, 6, 8] as const) {
     state.depth = depth
     const raw = serializeXiangqiSession('ai', state)
-    assert.deepEqual(parseXiangqiSession(raw, 'ai'), state)
-    assert.equal(parseXiangqiSession(raw, 'ai')!.history.length, 180)
+    const restored = parseXiangqiSession(raw, 'ai')
+    assert.ok(restored)
+    assert.equal(restored.history.length, 180)
+    assert.deepEqual(restored.history, state.history)
+    assert.deepEqual(restored, state)
   }
 })
 
@@ -92,19 +103,63 @@ test('Xiangqi restart removes only the chosen game and replaces its full history
   assert.deepEqual(loadXiangqiSession('ai', storage).state, initial())
 })
 
-test('Xiangqi king captures, ordinary wins and repetition endings survive round trips', () => {
+test('Xiangqi preserves legacy captured-king endings and normalizes the losing side to move', () => {
   const captured = initial()
   captured.board[0][4] = null
   captured.winner = 'red'
-  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', captured), 'ai'), captured)
+  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', captured), 'ai'), { ...captured, turn: 'black' })
+})
 
+test('Xiangqi recomputes cached winner and repetition labels rather than locking a playable board', () => {
   const mate = { ...initial(), winner: 'black' as const }
-  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', mate), 'ai'), mate)
+  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', mate), 'ai'), initial())
   const draw = { ...initial(), repetitionResult: { kind: 'repetition-draw' as const } }
-  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', draw), 'ai'), draw)
+  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', draw), 'ai'), initial())
   const perpetual = { ...initial(), winner: 'red' as const, repetitionResult: { kind: 'perpetual-check' as const, winner: 'red' as const, offender: 'black' as const } }
-  perpetual.history = [{ board: createInitialBoard(), turn: 'red', lastMove: null, winner: 'red', selected: null, repetitionResult: { kind: 'perpetual-check', winner: 'red', offender: 'black' } }]
-  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', perpetual), 'ai'), perpetual)
+  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', perpetual), 'ai'), initial())
+})
+
+test('Xiangqi migrates an obsolete ordinary threefold draw and retains the complete undo history', () => {
+  let state = initial()
+  for (let index = 0; index < 8; index++) state = play(state, horseCycle[index % 4])
+  state.repetitionResult = { kind: 'repetition-draw' }
+  const restored = parseXiangqiSession(serializeXiangqiSession('ai', state), 'ai')
+  assert.ok(restored)
+  assert.equal(restored.repetitionResult, null)
+  assert.equal(restored.winner, null)
+  assert.deepEqual(restored.history, state.history)
+  for (const step of horseCycle) state = play(state, step)
+  assert.deepEqual(parseXiangqiSession(serializeXiangqiSession('ai', state), 'ai')?.repetitionResult, { kind: 'repetition-draw' })
+})
+
+test('Xiangqi verifies a mate from the board and preserves both kings and the last move on reload', () => {
+  const start = { ...initial(), board: position(['....k....', '...R.R...', '....P....', '.........', '.........', '.........', '.........', '.........', '.........', '....K....']) }
+  const state = play(start, { fromR: 2, fromC: 4, toR: 1, toC: 4 })
+  state.turn = 'red' // Previous UI left the final turn on the winning mover.
+  state.winner = 'red'
+  const restored = parseXiangqiSession(serializeXiangqiSession('ai', state), 'ai')
+  assert.ok(restored)
+  assert.equal(restored.turn, 'black')
+  assert.equal(restored.winner, 'red')
+  assert.equal(restored.board[0][4]?.type, 'k')
+  assert.deepEqual(restored.lastMove, state.lastMove)
+  assert.deepEqual(restored.history, state.history)
+})
+
+test('Xiangqi rejects illegal imported transitions and false last-move records without altering the ongoing game', () => {
+  const state = pendingReply(), original = structuredClone(state)
+  for (const mutate of [
+    (saved: XiangqiSessionState) => { saved.board[4][0]!.id = 'phantom' },
+    (saved: XiangqiSessionState) => { saved.board[4][1] = saved.board[4][0]; saved.board[4][0] = null },
+    (saved: XiangqiSessionState) => { saved.turn = 'red' },
+    (saved: XiangqiSessionState) => { saved.lastMove!.toC = 1 },
+    (saved: XiangqiSessionState) => { saved.history[1].lastMove = null },
+  ]) {
+    const edited = structuredClone(state)
+    mutate(edited)
+    assert.equal(parseXiangqiSession(serializeXiangqiSession('ai', edited), 'ai'), null)
+  }
+  assert.deepEqual(state, original)
 })
 
 test('Xiangqi unfinished saves require both kings, and a winner must retain its own king', () => {
