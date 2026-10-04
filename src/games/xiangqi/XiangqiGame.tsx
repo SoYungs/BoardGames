@@ -65,6 +65,7 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const [moveEffect, setMoveEffect] = useState<{ move: Move; eventKey: number; kind: 'move' | 'capture' | 'place' } | null>(null)
   const [boardEpoch, setBoardEpoch] = useState(0)
   const effectSequence = useRef(0)
+  const exportUrl = useRef<string | null>(null)
   const aiCancelRef = useRef<(() => void) | null>(null)
   const importSequence = useRef(0)
   const positionRevision = useRef(0)
@@ -80,6 +81,14 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
     const sequence = importSequence
     mounted.current = true
     return () => { mounted.current = false; sequence.current++ }
+  }, [])
+
+  useEffect(() => {
+    const download = exportUrl
+    return () => {
+      if (download.current) URL.revokeObjectURL(download.current)
+      download.current = null
+    }
   }, [])
 
   useLayoutEffect(() => {
@@ -155,13 +164,16 @@ export function XiangqiGame({ mode }: { mode: Mode }) {
   const exportGame = () => {
     try {
       const json = serializeXiangqiSession(mode, { board, turn, selected, winner, lastMove, history, depth, repetitionResult })
+      if (exportUrl.current) URL.revokeObjectURL(exportUrl.current)
       const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+      // A native Save As dialog can remain open indefinitely. Keep the blob
+      // available until the next export or until this game is unmounted.
+      exportUrl.current = url
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = `boardgames-xiangqi-${mode}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
       anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-      setTransferMessage('已导出当前棋局和完整悔棋记录。')
+      setTransferMessage('已生成当前棋局和完整悔棋记录，请在浏览器中完成保存。')
     } catch {
       setTransferMessage('棋局导出失败，请重试，并保持本页面。')
     }
