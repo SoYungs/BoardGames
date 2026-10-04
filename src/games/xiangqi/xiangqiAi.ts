@@ -1,10 +1,11 @@
 import { MATE_SCORE } from '../ai/search'
 import { pseudoLegalMovesFrom } from './xiangqiMoves'
 import { XiangqiSearchPosition, xiangqiPieceValue, xiangqiPlacement } from './xiangqiSearchPosition'
+import { XiangqiRepetitionTracker, type XiangqiPositionRecord } from './xiangqiRepetition'
 import type { Board, Move, Side } from './xiangqiTypes'
 
 export type XiangqiAnalysis = { depth: number; nodes: number; elapsedMs: number; targetDepth: number; timedOut: boolean }
-type Entry = { hash: number; lock: number; depth: number; extensions: number; score: number; bound: 'exact' | 'lower' | 'upper'; move: number }
+type Entry = { hash: number; lock: number; context: number; contextLock: number; depth: number; extensions: number; score: number; bound: 'exact' | 'lower' | 'upper'; move: number }
 type Candidate = { move: Move; key: number; order: number; capture: boolean; checking: boolean }
 const other = (side: Side): Side => side === 'red' ? 'black' : 'red'
 const moveKey = (move: Move) => (move.fromR * 9 + move.fromC) * 90 + move.toR * 9 + move.toC
@@ -13,7 +14,7 @@ const MAX_PLY = 48
 const TABLE_SIZE = 65_536
 
 /** Xiangqi keeps its own bounded search so deeper cannon tactics do not alter other games. */
-export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDepth = 8): { move: Move | null; analysis: XiangqiAnalysis } {
+export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDepth = 8, gameHistory: readonly XiangqiPositionRecord[] = []): { move: Move | null; analysis: XiangqiAnalysis } {
   const started = performance.now()
   const budget = Math.min(3200, Math.max(25, Number.isNaN(budgetMs) ? 25 : budgetMs))
   const targetDepth = Math.max(1, Math.min(12, Number.isFinite(maxDepth) ? Math.floor(maxDepth) : 8))
@@ -32,9 +33,54 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
   const table: (Entry | undefined)[] = new Array(TABLE_SIZE)
   const killers = Array.from({ length: MAX_PLY }, () => [-1, -1])
   const history = [new Int32Array(8100), new Int32Array(8100)]
-  const path = new Set<number>()
   const hashFor = (turn: Side) => (position.hash ^ (turn === 'red' ? 0xa32f41bd : 0x97db3187)) >>> 0
   const pathKey = (turn: Side) => hashFor(turn) * 0x20_0000 + (position.lock & 0x1f_ffff)
+  const repetition = new XiangqiRepetitionTracker()
+  const contexts = [0x6db37152], contextLocks = [0x93c72ef1]
+  const enterStamp = (key: number, turn: Side, checked: boolean) => {
+    repetition.push({ key, turn, checked })
+    // A cached board score is meaningful only with the same ordered history.
+    // Both tags also include the full 53-bit position stamp and check status.
+    const low = key >>> 0, high = Math.floor(key / 0x1_0000_0000)
+    contexts.push((Math.imul(contexts.at(-1)! ^ low, 0x01000193) ^ high ^ Number(checked)) >>> 0)
+    contextLocks.push((Math.imul(contextLocks.at(-1)! ^ high, 0x85ebca6b) ^ low ^ (checked ? 0x9e3779b9 : 0)) >>> 0)
+  }
+  const enterPosition = (turn: Side, checked: boolean) => enterStamp(pathKey(turn), turn, checked)
+  const leavePosition = () => { repetition.pop(); contexts.pop(); contextLocks.pop() }
+  const repeatedScore = (turn: Side, ply: number): number | null => {
+    const outcome = repetition.result()
+    if (!outcome) return null
+    repeatHits++
+    return outcome.kind === 'repetition-draw' ? 0 : (outcome.winner === turn ? MATE_SCORE - ply : -MATE_SCORE + ply)
+  }
+  // Discourage only an actual completed checking cycle in the played game.
+  // Novel checks, immediate wins and unavoidable legal defences stay available.
+  const recurringChecks = new Set<number>()
+  try {
+    for (const record of gameHistory) {
+      check()
+      const past = new XiangqiSearchPosition(record.board)
+      const hash = (past.hash ^ (record.turn === 'red' ? 0xa32f41bd : 0x97db3187)) >>> 0
+      enterStamp(hash * 0x20_0000 + (past.lock & 0x1f_ffff), record.turn, past.inCheck(record.turn))
+    }
+    enterPosition(side, position.inCheck(side))
+    if (repetition.result()) return result(null)
+    if (gameHistory.length) for (const move of legal) {
+      check()
+      const victim = position.make(move)
+      enterPosition(other(side), position.inCheck(other(side)))
+      try {
+        const outcome = repetition.result(2)
+        if (outcome?.kind === 'perpetual-check' && outcome.offender === side) recurringChecks.add(moveKey(move))
+      } finally { leavePosition(); position.unmake(move, victim) }
+    }
+    const freshReserve = legal.find(move => !recurringChecks.has(moveKey(move)))
+    if (freshReserve) best = freshReserve
+  } catch (error) {
+    if (error !== TIMEOUT) throw error
+    timedOut = true
+    return result(best)
+  }
 
   const candidates = (turn: Side, ply: number, preferred = -1, tactical = false, allowChecks = true): Candidate[] => {
     const output: Candidate[] = []
@@ -106,7 +152,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
         const victim = position.board[move.toR][move.toC]
         return victim ? 10_000 + xiangqiPieceValue(victim.type) * 2 - xiangqiPieceValue(position.board[move.fromR][move.fromC]!.type) : 0
       }
-      return gain(b) - gain(a)
+      return Number(recurringChecks.has(moveKey(a))) - Number(recurringChecks.has(moveKey(b))) || gain(b) - gain(a)
     })
     for (const move of legal) {
       check(); nodes++
@@ -123,6 +169,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
         }
       } finally { position.unmake(move, victim) }
       if (loses) { losing.add(moveKey(move)); score = -MATE_SCORE + 2 }
+      else if (recurringChecks.has(moveKey(move))) score = -MATE_SCORE + MAX_PLY
       ranked.push({ move, score })
       if (!loses && score > fallbackScore) { fallbackScore = score; safe = move; best = move }
     }
@@ -131,15 +178,15 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
   } catch (error) {
     if (error !== TIMEOUT) throw error
     timedOut = true
-    if (!safe) best = legal.find(move => !losing.has(moveKey(move))) ?? best
+    if (!safe) best = legal.find(move => !losing.has(moveKey(move)) && !recurringChecks.has(moveKey(move))) ?? legal.find(move => !losing.has(moveKey(move))) ?? best
     return result(best)
   }
 
   const quiet = (turn: Side, alphaInput: number, beta: number, ply: number, capturesLeft: number, checksLeft: number): number => {
     check(); nodes++
+    const repeated = repeatedScore(turn, ply)
+    if (repeated !== null) return repeated
     if (ply >= MAX_PLY) return position.hasLegalMove(turn, check) ? position.evaluate(turn) : -MATE_SCORE + ply
-    const key = pathKey(turn)
-    if (path.has(key)) { repeatHits++; return 0 }
     const checked = position.inCheck(turn)
     if (!checked) {
       if (!position.hasLegalMove(turn, check)) return -MATE_SCORE + ply
@@ -151,27 +198,25 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
     let value = checked ? -MATE_SCORE : position.evaluate(turn)
     let alpha = alphaInput
     if (!checked) { if (value >= beta) return value; alpha = Math.max(alpha, value) }
-    path.add(key)
-    try {
-      for (const entry of moves) {
-        if (!checked && !entry.checking && capturesLeft <= 0) continue
-        if (checked && checksLeft < -4) break
-        const victim = position.make(entry.move)
-        let score: number
-        try { score = -quiet(other(turn), -beta, -alpha, ply + 1, capturesLeft - Number(entry.capture), checksLeft - Number(checked || entry.checking)) } finally { position.unmake(entry.move, victim) }
-        value = Math.max(value, score)
-        alpha = Math.max(alpha, score)
-        if (alpha >= beta) break
-      }
-      return checked && checksLeft < -4 ? position.evaluate(turn) : value
-    } finally { path.delete(key) }
+    for (const entry of moves) {
+      if (!checked && !entry.checking && capturesLeft <= 0) continue
+      if (checked && checksLeft < -4) break
+      const victim = position.make(entry.move)
+      let score: number
+      enterPosition(other(turn), entry.checking)
+      try { score = -quiet(other(turn), -beta, -alpha, ply + 1, capturesLeft - Number(entry.capture), checksLeft - Number(checked || entry.checking)) } finally { leavePosition(); position.unmake(entry.move, victim) }
+      value = Math.max(value, score)
+      alpha = Math.max(alpha, score)
+      if (alpha >= beta) break
+    }
+    return checked && checksLeft < -4 ? position.evaluate(turn) : value
   }
 
   const negamax = (turn: Side, depth: number, alphaInput: number, betaInput: number, ply: number, extensions: number): number => {
     check(); nodes++
+    const repeated = repeatedScore(turn, ply)
+    if (repeated !== null) return repeated
     if (ply >= MAX_PLY) return position.hasLegalMove(turn, check) ? position.evaluate(turn) : -MATE_SCORE + ply
-    const repetition = pathKey(turn)
-    if (path.has(repetition)) { repeatHits++; return 0 }
     const repeatsBefore = repeatHits
     const checked = position.inCheck(turn)
     if (checked && extensions < 2) { depth++; extensions++ }
@@ -180,7 +225,7 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
     const stored = table[slot]
     const cached = stored?.hash === hash && stored.lock === position.lock ? stored : undefined
     let alpha = alphaInput, beta = betaInput
-    if (cached && cached.depth >= depth && cached.extensions === extensions) {
+    if (cached && cached.context === contexts.at(-1) && cached.contextLock === contextLocks.at(-1) && cached.depth >= depth && cached.extensions === extensions) {
       const score = Math.abs(cached.score) > MATE_SCORE / 2 ? cached.score - Math.sign(cached.score) * ply : cached.score
       if (cached.bound === 'exact') return score
       if (cached.bound === 'lower') alpha = Math.max(alpha, score)
@@ -191,36 +236,37 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
     if (!moves.length) return -MATE_SCORE + ply
     const effectiveAlpha = alpha, effectiveBeta = beta
     let value = -MATE_SCORE, chosen = -1
-    path.add(repetition)
-    try {
-      for (let index = 0; index < moves.length; index++) {
-        const entry = moves[index]
-        const victim = position.make(entry.move)
-        let score: number
-        try {
-          score = index === 0 ? -negamax(other(turn), depth - 1, -beta, -alpha, ply + 1, extensions)
-            : -negamax(other(turn), depth - 1, -alpha - 1, -alpha, ply + 1, extensions)
-          if (index > 0 && score > alpha && score < beta) score = -negamax(other(turn), depth - 1, -beta, -alpha, ply + 1, extensions)
-        } finally { position.unmake(entry.move, victim) }
-        if (score > value) { value = score; chosen = entry.key }
-        alpha = Math.max(alpha, score)
-        if (alpha >= beta) {
-          if (!entry.capture) {
-            if (killers[ply][0] !== entry.key) { killers[ply][1] = killers[ply][0]; killers[ply][0] = entry.key }
-            const scores = history[turn === 'red' ? 0 : 1]
-            scores[entry.key] = Math.min(20_000, scores[entry.key] + depth * depth * 8)
-          }
-          break
+    for (let index = 0; index < moves.length; index++) {
+      const entry = moves[index]
+      const victim = position.make(entry.move)
+      enterPosition(other(turn), entry.checking)
+      let score: number
+      try {
+        score = index === 0 ? -negamax(other(turn), depth - 1, -beta, -alpha, ply + 1, extensions)
+          : -negamax(other(turn), depth - 1, -alpha - 1, -alpha, ply + 1, extensions)
+        if (index > 0 && score > alpha && score < beta) score = -negamax(other(turn), depth - 1, -beta, -alpha, ply + 1, extensions)
+      } finally { leavePosition(); position.unmake(entry.move, victim) }
+      if (score > value) { value = score; chosen = entry.key }
+      alpha = Math.max(alpha, score)
+      if (alpha >= beta) {
+        if (!entry.capture) {
+          if (killers[ply][0] !== entry.key) { killers[ply][1] = killers[ply][0]; killers[ply][0] = entry.key }
+          const scores = history[turn === 'red' ? 0 : 1]
+          scores[entry.key] = Math.min(20_000, scores[entry.key] + depth * depth * 8)
         }
+        break
       }
-      if (repeatHits === repeatsBefore) table[slot] = { hash, lock: position.lock, depth, extensions, score: Math.abs(value) > MATE_SCORE / 2 ? value + Math.sign(value) * ply : value, move: chosen, bound: value <= effectiveAlpha ? 'upper' : value >= effectiveBeta ? 'lower' : 'exact' }
-      return value
-    } finally { path.delete(repetition) }
+    }
+    if (repeatHits === repeatsBefore) table[slot] = { hash, lock: position.lock, context: contexts.at(-1)!, contextLock: contextLocks.at(-1)!, depth, extensions, score: Math.abs(value) > MATE_SCORE / 2 ? value + Math.sign(value) * ply : value, move: chosen, bound: value <= effectiveAlpha ? 'upper' : value >= effectiveBeta ? 'lower' : 'exact' }
+    return value
   }
 
   const roots = ranked.filter(entry => !losing.has(moveKey(entry.move)))
   if (!roots.length) roots.push(...ranked)
-  path.add(pathKey(side))
+  if (roots.some(entry => !recurringChecks.has(moveKey(entry.move)))) {
+    for (let index = roots.length - 1; index >= 0; index--) if (recurringChecks.has(moveKey(roots[index].move))) roots.splice(index, 1)
+    if (recurringChecks.has(moveKey(best))) best = roots[0].move
+  }
   for (let depth = 1; depth <= targetDepth; depth++) {
     let roundBest = best, alpha = -MATE_SCORE
     const scores = new Map<number, number>()
@@ -229,8 +275,9 @@ export function analyzeXiangqi(board: Board, side: Side, budgetMs = 800, maxDept
       for (const entry of roots) {
         check()
         const victim = position.make(entry.move)
+        enterPosition(other(side), position.inCheck(other(side)))
         let score: number
-        try { score = -negamax(other(side), depth - 1, -MATE_SCORE, -alpha, 1, 0) } finally { position.unmake(entry.move, victim) }
+        try { score = -negamax(other(side), depth - 1, -MATE_SCORE, -alpha, 1, 0) } finally { leavePosition(); position.unmake(entry.move, victim) }
         scores.set(moveKey(entry.move), score)
         if (score > alpha) { alpha = score; roundBest = entry.move }
       }

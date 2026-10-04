@@ -34,6 +34,14 @@
 .xiangqi-ai-depth select:disabled { opacity: .65; cursor: wait; }
 .xiangqi-ai-analysis { margin: 10px 0 0; color: #47633e; font-size: 12px; line-height: 1.7; font-variant-numeric: tabular-nums; }
 .xiangqi-ai-depth-note { margin: 8px 0 0; color: #75836b; font-size: 11px; line-height: 1.8; }
+.xiangqi-session-note { margin-bottom: 10px; }
+.xiangqi-import { position: relative; display: inline-flex; box-sizing: border-box; min-height: 42px; align-items: center; cursor: pointer; overflow: hidden; }
+.xiangqi-import input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.xiangqi-import:focus-within { outline: 2px solid #416c49; outline-offset: 2px; }
+.xiangqi-repetition-warning { padding: 9px 12px; margin-bottom: 12px; border: 1px solid #dfc997; border-radius: 8px; background: #fff8e9; color: #806132; }
+.xiangqi-paste-panel { display: grid; gap: 9px; margin-bottom: 15px; padding: 12px 14px; border: 1px solid #dfe4d4; border-radius: 10px; background: #f4f5eb; color: #496344; font-size: 12px; }
+.xiangqi-paste-panel textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; resize: vertical; border: 1px solid #cfd9c2; border-radius: 8px; background: #fbfcf5; color: #365338; font: 11px/1.7 monospace; }
+.xiangqi-paste-panel button { justify-self: start; }
 @media (max-width: 540px) { .xiangqi-ai-settings { padding: 10px 11px; }.xiangqi-ai-depth select { max-width: none; flex-basis: 100%; } }
 @keyframes moving-selection { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @keyframes moving-check { from { opacity: 0; translate: 0 -4px; } to { opacity: 1; translate: 0 0; } }
